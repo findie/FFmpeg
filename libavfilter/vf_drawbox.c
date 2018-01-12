@@ -47,6 +47,7 @@ static const char *const var_names[] = {
     "h",              ///< height of the rendered box
     "w",              ///< width  of the rendered box
     "t",
+    "time",
     "fill",
     NULL
 };
@@ -64,6 +65,7 @@ enum var_name {
     VAR_H,
     VAR_W,
     VAR_T,
+    VAR_TIME,
     VAR_MAX,
     VARS_NB
 };
@@ -79,6 +81,7 @@ typedef struct DrawBoxContext {
     char *x_expr, *y_expr; ///< expression for x and y
     char *w_expr, *h_expr; ///< expression for width and height
     char *t_expr;          ///< expression for thickness
+    double time;           ///< time
     int have_alpha;
     int replace;
 } DrawBoxContext;
@@ -121,7 +124,7 @@ static int query_formats(AVFilterContext *ctx)
     return ff_set_common_formats(ctx, fmts_list);
 }
 
-static int config_input(AVFilterLink *inlink)
+static int parse_data(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     DrawBoxContext *s = ctx->priv;
@@ -131,21 +134,18 @@ static int config_input(AVFilterLink *inlink)
     int ret;
     int i;
 
-    s->hsub = desc->log2_chroma_w;
-    s->vsub = desc->log2_chroma_h;
-    s->have_alpha = desc->flags & AV_PIX_FMT_FLAG_ALPHA;
-
     var_values[VAR_IN_H] = var_values[VAR_IH] = inlink->h;
     var_values[VAR_IN_W] = var_values[VAR_IW] = inlink->w;
     var_values[VAR_SAR]  = inlink->sample_aspect_ratio.num ? av_q2d(inlink->sample_aspect_ratio) : 1;
     var_values[VAR_DAR]  = (double)inlink->w / inlink->h * var_values[VAR_SAR];
     var_values[VAR_HSUB] = s->hsub;
     var_values[VAR_VSUB] = s->vsub;
-    var_values[VAR_X] = NAN;
-    var_values[VAR_Y] = NAN;
-    var_values[VAR_H] = NAN;
-    var_values[VAR_W] = NAN;
-    var_values[VAR_T] = NAN;
+    var_values[VAR_X] = s->x;
+    var_values[VAR_Y] = s->y;
+    var_values[VAR_H] = s->h;
+    var_values[VAR_W] = s->w;
+    var_values[VAR_T] = s->thickness;
+    var_values[VAR_TIME] = s->time;
 
     for (i = 0; i <= NUM_EXPR_EVALS; i++) {
         /* evaluate expressions, fail on last iteration */
@@ -201,11 +201,40 @@ static int config_input(AVFilterLink *inlink)
 
     return 0;
 
-fail:
+    fail:
     av_log(ctx, AV_LOG_ERROR,
-           "Error when evaluating the expression '%s'.\n",
-           expr);
+           "Error when evaluating the expression '%s' (%d).\n",
+           expr, ret);
     return ret;
+}
+static int config_input(AVFilterLink *inlink)
+{
+    AVFilterContext *ctx = inlink->dst;
+    DrawBoxContext *s = ctx->priv;
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
+//    double var_values[VARS_NB], res;
+//    char *expr;
+//    int ret;
+//    int i;
+
+    s->hsub = desc->log2_chroma_w;
+    s->vsub = desc->log2_chroma_h;
+    s->have_alpha = desc->flags & AV_PIX_FMT_FLAG_ALPHA;
+
+//    var_values[VAR_IN_H] = var_values[VAR_IH] = inlink->h;
+//    var_values[VAR_IN_W] = var_values[VAR_IW] = inlink->w;
+//    var_values[VAR_SAR]  = inlink->sample_aspect_ratio.num ? av_q2d(inlink->sample_aspect_ratio) : 1;
+//    var_values[VAR_DAR]  = (double)inlink->w / inlink->h * var_values[VAR_SAR];
+//    var_values[VAR_HSUB] = s->hsub;
+//    var_values[VAR_VSUB] = s->vsub;
+//    var_values[VAR_X] = NAN;
+//    var_values[VAR_Y] = NAN;
+//    var_values[VAR_H] = NAN;
+//    var_values[VAR_W] = NAN;
+//    var_values[VAR_T] = NAN;
+//    var_values[VAR_TIME] = NAN;
+
+    return parse_data(inlink);
 }
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
@@ -213,6 +242,12 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     DrawBoxContext *s = inlink->dst->priv;
     int plane, x, y, xb = s->x, yb = s->y;
     unsigned char *row[4];
+
+    s->time = frame->pts == AV_NOPTS_VALUE ?
+                    NAN : frame->pts * av_q2d(inlink->time_base);
+    av_log(s, AV_LOG_VERBOSE, "pts: %lld time base:%f time: %f\n", frame->pts, av_q2d(inlink->time_base), s->time);
+
+    parse_data(inlink);
 
     if (s->have_alpha && s->replace) {
         for (y = FFMAX(yb, 0); y < frame->height && y < (yb + s->h); y++) {
