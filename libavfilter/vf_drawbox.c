@@ -128,7 +128,6 @@ static int parse_data(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     DrawBoxContext *s = ctx->priv;
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
     double var_values[VARS_NB], res;
     char *expr;
     int ret;
@@ -147,22 +146,10 @@ static int parse_data(AVFilterLink *inlink)
     var_values[VAR_T] = s->thickness;
     var_values[VAR_TIME] = s->time;
 
+    av_log(s, AV_LOG_VERBOSE, "before: x:%d y:%d w:%d h:%d\n", s->x, s->y, s->w, s->h);
+
     for (i = 0; i <= NUM_EXPR_EVALS; i++) {
         /* evaluate expressions, fail on last iteration */
-        var_values[VAR_MAX] = inlink->w;
-        if ((ret = av_expr_parse_and_eval(&res, (expr = s->x_expr),
-                                          var_names, var_values,
-                                          NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
-            goto fail;
-        s->x = var_values[VAR_X] = res;
-
-        var_values[VAR_MAX] = inlink->h;
-        if ((ret = av_expr_parse_and_eval(&res, (expr = s->y_expr),
-                                          var_names, var_values,
-                                          NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
-            goto fail;
-        s->y = var_values[VAR_Y] = res;
-
         var_values[VAR_MAX] = inlink->w - s->x;
         if ((ret = av_expr_parse_and_eval(&res, (expr = s->w_expr),
                                           var_names, var_values,
@@ -177,12 +164,28 @@ static int parse_data(AVFilterLink *inlink)
             goto fail;
         s->h = var_values[VAR_H] = res;
 
+        var_values[VAR_MAX] = inlink->w;
+        if ((ret = av_expr_parse_and_eval(&res, (expr = s->x_expr),
+                                          var_names, var_values,
+                                          NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
+            goto fail;
+        s->x = var_values[VAR_X] = res;
+
+        var_values[VAR_MAX] = inlink->h;
+        if ((ret = av_expr_parse_and_eval(&res, (expr = s->y_expr),
+                                          var_names, var_values,
+                                          NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
+            goto fail;
+        s->y = var_values[VAR_Y] = res;
+
         var_values[VAR_MAX] = INT_MAX;
         if ((ret = av_expr_parse_and_eval(&res, (expr = s->t_expr),
                                           var_names, var_values,
                                           NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
             goto fail;
         s->thickness = var_values[VAR_T] = res;
+
+        av_log(s, AV_LOG_VERBOSE, "after %d: x:%d y:%d w:%d h:%d\n", i, s->x, s->y, s->w, s->h);
     }
 
     /* if w or h are zero, use the input w/h */
@@ -212,27 +215,10 @@ static int config_input(AVFilterLink *inlink)
     AVFilterContext *ctx = inlink->dst;
     DrawBoxContext *s = ctx->priv;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
-//    double var_values[VARS_NB], res;
-//    char *expr;
-//    int ret;
-//    int i;
 
     s->hsub = desc->log2_chroma_w;
     s->vsub = desc->log2_chroma_h;
     s->have_alpha = desc->flags & AV_PIX_FMT_FLAG_ALPHA;
-
-//    var_values[VAR_IN_H] = var_values[VAR_IH] = inlink->h;
-//    var_values[VAR_IN_W] = var_values[VAR_IW] = inlink->w;
-//    var_values[VAR_SAR]  = inlink->sample_aspect_ratio.num ? av_q2d(inlink->sample_aspect_ratio) : 1;
-//    var_values[VAR_DAR]  = (double)inlink->w / inlink->h * var_values[VAR_SAR];
-//    var_values[VAR_HSUB] = s->hsub;
-//    var_values[VAR_VSUB] = s->vsub;
-//    var_values[VAR_X] = NAN;
-//    var_values[VAR_Y] = NAN;
-//    var_values[VAR_H] = NAN;
-//    var_values[VAR_W] = NAN;
-//    var_values[VAR_T] = NAN;
-//    var_values[VAR_TIME] = NAN;
 
     return parse_data(inlink);
 }
@@ -240,14 +226,14 @@ static int config_input(AVFilterLink *inlink)
 static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
 {
     DrawBoxContext *s = inlink->dst->priv;
-    int plane, x, y, xb = s->x, yb = s->y;
-    unsigned char *row[4];
 
     s->time = frame->pts == AV_NOPTS_VALUE ?
-                    NAN : frame->pts * av_q2d(inlink->time_base);
+              NAN : frame->pts * av_q2d(inlink->time_base);
     av_log(s, AV_LOG_VERBOSE, "pts: %lld time base:%f time: %f\n", frame->pts, av_q2d(inlink->time_base), s->time);
-
     parse_data(inlink);
+
+    int plane, x, y, xb = s->x, yb = s->y;
+    unsigned char *row[4];
 
     if (s->have_alpha && s->replace) {
         for (y = FFMAX(yb, 0); y < frame->height && y < (yb + s->h); y++) {
