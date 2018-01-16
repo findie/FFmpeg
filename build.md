@@ -14,7 +14,7 @@ FFmpeg:
 brew install \
     automake fdk-aac git lame libass libtool libvorbis libvpx \
     opus sdl shtool texi2html theora wget x264 x265 xvid nasm \
-    fontconfig
+    fontconfig fribidi
 ```
 
 ### Compiling
@@ -27,7 +27,7 @@ git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
     --enable-gpl  --enable-version3  --enable-nonfree \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfdk-aac --enable-libfreetype \
-    --enable-libopus --enable-libxvid --enable-libfontconfig \
+    --enable-libopus --enable-libxvid --enable-libfontconfig --enable-libfribidi \
     --enable-libmp3lame --enable-libtheora --enable-libvorbis && \
 \
 make build -j4 && ./ffmpeg -h 2>&1 | head -n3
@@ -57,7 +57,7 @@ apt-get -y install \
     texinfo wget zlib1g-dev fontconfig \
     libvpx-dev libx264-dev libx265-dev \
     libfdk-aac-dev libmp3lame-dev libopus-dev \
-    yasm nasm libxvidcore-dev
+    yasm nasm libxvidcore-dev libfribidi-dev
     
 ```
 #### Build
@@ -68,7 +68,7 @@ git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
     --enable-gpl  --enable-version3  --enable-nonfree \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfdk-aac --enable-libfreetype \
-    --enable-libopus --enable-libxvid --enable-libfontconfig \
+    --enable-libopus --enable-libxvid --enable-libfontconfig --enable-libfribidi \
     --enable-libmp3lame --enable-libtheora --enable-libvorbis && \
 \
 make build -j4 && ./ffmpeg -h 2>&1 | head -n3
