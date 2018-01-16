@@ -133,10 +133,10 @@ static int iir_ch_## name(AVFilterContext *ctx, void *arg, int ch, int nb_jobs) 
         oc[0] = sample;                                                 \
         sample *= og;                                                   \
         if (need_clipping && sample < min) {                            \
-            *clippings++;                                               \
+            (*clippings)++;                                             \
             dst[n] = min;                                               \
         } else if (need_clipping && sample > max) {                     \
-            *clippings++;                                               \
+            (*clippings)++;                                             \
             dst[n] = max;                                               \
         } else {                                                        \
             dst[n] = sample;                                            \
@@ -188,10 +188,10 @@ static int iir_ch_serial_## name(AVFilterContext *ctx, void *arg, int ch, int nb
             o0 *= og;                                                   \
                                                                         \
             if (need_clipping && o0 < min) {                            \
-                *clippings++;                                           \
+                (*clippings)++;                                         \
                 dst[n] = min;                                           \
             } else if (need_clipping && o0 > max) {                     \
-                *clippings++;                                           \
+                (*clippings)++;                                         \
                 dst[n] = max;                                           \
             } else {                                                    \
                 dst[n] = o0;                                            \
@@ -283,7 +283,7 @@ static int read_tf_coefficients(AVFilterContext *ctx, char *item_str, int nb_ite
     return 0;
 }
 
-static int read_zp_coefficients(AVFilterContext *ctx, char *item_str, int nb_items, double *dst)
+static int read_zp_coefficients(AVFilterContext *ctx, char *item_str, int nb_items, double *dst, const char *format)
 {
     char *p, *arg, *old_str, *saveptr = NULL;
     int i;
@@ -296,7 +296,7 @@ static int read_zp_coefficients(AVFilterContext *ctx, char *item_str, int nb_ite
             break;
 
         p = NULL;
-        if (sscanf(arg, "%lf %lfi", &dst[i*2], &dst[i*2+1]) != 2) {
+        if (sscanf(arg, format, &dst[i*2], &dst[i*2+1]) != 2) {
             av_log(ctx, AV_LOG_ERROR, "Invalid coefficients supplied: %s\n", arg);
             av_freep(&old_str);
             return AVERROR(EINVAL);
@@ -307,6 +307,8 @@ static int read_zp_coefficients(AVFilterContext *ctx, char *item_str, int nb_ite
 
     return 0;
 }
+
+static const char *format[] = { "%lf", "%lf %lfi", "%lf %lfr", "%lf %lfd" };
 
 static int read_channels(AVFilterContext *ctx, int channels, uint8_t *item_str, int ab)
 {
@@ -332,14 +334,14 @@ static int read_channels(AVFilterContext *ctx, int channels, uint8_t *item_str, 
 
         p = NULL;
         iir->cache[ab] = av_calloc(iir->nb_ab[ab] + 1, sizeof(double));
-        iir->ab[ab] = av_calloc(iir->nb_ab[ab] * (s->format + 1), sizeof(double));
+        iir->ab[ab] = av_calloc(iir->nb_ab[ab] * (!!s->format + 1), sizeof(double));
         if (!iir->ab[ab] || !iir->cache[ab]) {
             av_freep(&old_str);
             return AVERROR(ENOMEM);
         }
 
         if (s->format) {
-            ret = read_zp_coefficients(ctx, arg, iir->nb_ab[ab], iir->ab[ab]);
+            ret = read_zp_coefficients(ctx, arg, iir->nb_ab[ab], iir->ab[ab], format[s->format]);
         } else {
             ret = read_tf_coefficients(ctx, arg, iir->nb_ab[ab], iir->ab[ab]);
         }
@@ -404,7 +406,7 @@ static int expand(AVFilterContext *ctx, double *pz, int nb, double *coeffs)
 static int convert_zp2tf(AVFilterContext *ctx, int channels)
 {
     AudioIIRContext *s = ctx->priv;
-    int ch, i, j, ret;
+    int ch, i, j, ret = 0;
 
     for (ch = 0; ch < channels; ch++) {
         IIRChannel *iir = &s->iir[ch];
@@ -412,21 +414,19 @@ static int convert_zp2tf(AVFilterContext *ctx, int channels)
 
         topc = av_calloc((iir->nb_ab[0] + 1) * 2, sizeof(*topc));
         botc = av_calloc((iir->nb_ab[1] + 1) * 2, sizeof(*botc));
-        if (!topc || !botc)
-            return AVERROR(ENOMEM);
+        if (!topc || !botc) {
+            ret = AVERROR(ENOMEM);
+            goto fail;
+        }
 
         ret = expand(ctx, iir->ab[0], iir->nb_ab[0], botc);
         if (ret < 0) {
-            av_free(topc);
-            av_free(botc);
-            return ret;
+            goto fail;
         }
 
         ret = expand(ctx, iir->ab[1], iir->nb_ab[1], topc);
         if (ret < 0) {
-            av_free(topc);
-            av_free(botc);
-            return ret;
+            goto fail;
         }
 
         for (j = 0, i = iir->nb_ab[1]; i >= 0; j++, i--) {
@@ -439,11 +439,14 @@ static int convert_zp2tf(AVFilterContext *ctx, int channels)
         }
         iir->nb_ab[0]++;
 
+fail:
         av_free(topc);
         av_free(botc);
+        if (ret < 0)
+            break;
     }
 
-    return 0;
+    return ret;
 }
 
 static int decompose_zp2biquads(AVFilterContext *ctx, int channels)
@@ -585,6 +588,60 @@ static int decompose_zp2biquads(AVFilterContext *ctx, int channels)
     return 0;
 }
 
+static void convert_pr2zp(AVFilterContext *ctx, int channels)
+{
+    AudioIIRContext *s = ctx->priv;
+    int ch;
+
+    for (ch = 0; ch < channels; ch++) {
+        IIRChannel *iir = &s->iir[ch];
+        int n;
+
+        for (n = 0; n < iir->nb_ab[0]; n++) {
+            double r = iir->ab[0][2*n];
+            double angle = iir->ab[0][2*n+1];
+
+            iir->ab[0][2*n]   = r * cos(angle);
+            iir->ab[0][2*n+1] = r * sin(angle);
+        }
+
+        for (n = 0; n < iir->nb_ab[1]; n++) {
+            double r = iir->ab[1][2*n];
+            double angle = iir->ab[1][2*n+1];
+
+            iir->ab[1][2*n]   = r * cos(angle);
+            iir->ab[1][2*n+1] = r * sin(angle);
+        }
+    }
+}
+
+static void convert_pd2zp(AVFilterContext *ctx, int channels)
+{
+    AudioIIRContext *s = ctx->priv;
+    int ch;
+
+    for (ch = 0; ch < channels; ch++) {
+        IIRChannel *iir = &s->iir[ch];
+        int n;
+
+        for (n = 0; n < iir->nb_ab[0]; n++) {
+            double r = iir->ab[0][2*n];
+            double angle = M_PI*iir->ab[0][2*n+1]/180.;
+
+            iir->ab[0][2*n]   = r * cos(angle);
+            iir->ab[0][2*n+1] = r * sin(angle);
+        }
+
+        for (n = 0; n < iir->nb_ab[1]; n++) {
+            double r = iir->ab[1][2*n];
+            double angle = M_PI*iir->ab[1][2*n+1]/180.;
+
+            iir->ab[1][2*n]   = r * cos(angle);
+            iir->ab[1][2*n+1] = r * sin(angle);
+        }
+    }
+}
+
 static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
@@ -609,10 +666,16 @@ static int config_output(AVFilterLink *outlink)
     if (ret < 0)
         return ret;
 
+    if (s->format == 2) {
+        convert_pr2zp(ctx, inlink->channels);
+    } else if (s->format == 3) {
+        convert_pd2zp(ctx, inlink->channels);
+    }
+
     if (s->format == 0)
         av_log(ctx, AV_LOG_WARNING, "tf coefficients format is not recommended for too high number of zeros/poles.\n");
 
-    if (s->format == 1 && s->process == 0) {
+    if (s->format > 0 && s->process == 0) {
         av_log(ctx, AV_LOG_WARNING, "Direct processsing is not recommended for zp coefficients format.\n");
 
         ret = convert_zp2tf(ctx, inlink->channels);
@@ -621,7 +684,7 @@ static int config_output(AVFilterLink *outlink)
     } else if (s->format == 0 && s->process == 1) {
         av_log(ctx, AV_LOG_ERROR, "Serial cascading is not implemented for transfer function.\n");
         return AVERROR_PATCHWELCOME;
-    } else if (s->format == 1 && s->process == 1) {
+    } else if (s->format > 0 && s->process == 1) {
         if (inlink->format == AV_SAMPLE_FMT_S16P)
             av_log(ctx, AV_LOG_WARNING, "Serial cascading is not recommended for i16 precision.\n");
 
@@ -754,9 +817,11 @@ static const AVOption aiir_options[] = {
     { "k", "set channels gains",                   OFFSET(g_str),    AV_OPT_TYPE_STRING, {.str="1|1"}, 0, 0, AF },
     { "dry", "set dry gain",                       OFFSET(dry_gain), AV_OPT_TYPE_DOUBLE, {.dbl=1},     0, 1, AF },
     { "wet", "set wet gain",                       OFFSET(wet_gain), AV_OPT_TYPE_DOUBLE, {.dbl=1},     0, 1, AF },
-    { "f", "set coefficients format",              OFFSET(format),   AV_OPT_TYPE_INT,    {.i64=1},     0, 1, AF, "format" },
+    { "f", "set coefficients format",              OFFSET(format),   AV_OPT_TYPE_INT,    {.i64=1},     0, 3, AF, "format" },
     { "tf", "transfer function",                   0,                AV_OPT_TYPE_CONST,  {.i64=0},     0, 0, AF, "format" },
     { "zp", "Z-plane zeros/poles",                 0,                AV_OPT_TYPE_CONST,  {.i64=1},     0, 0, AF, "format" },
+    { "pr", "Z-plane zeros/poles (polar radians)", 0,                AV_OPT_TYPE_CONST,  {.i64=2},     0, 0, AF, "format" },
+    { "pd", "Z-plane zeros/poles (polar degrees)", 0,                AV_OPT_TYPE_CONST,  {.i64=3},     0, 0, AF, "format" },
     { "r", "set kind of processing",               OFFSET(process),  AV_OPT_TYPE_INT,    {.i64=1},     0, 1, AF, "process" },
     { "d", "direct",                               0,                AV_OPT_TYPE_CONST,  {.i64=0},     0, 0, AF, "process" },
     { "s", "serial cascading",                     0,                AV_OPT_TYPE_CONST,  {.i64=1},     0, 0, AF, "process" },
