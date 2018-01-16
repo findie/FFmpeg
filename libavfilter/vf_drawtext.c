@@ -162,6 +162,7 @@ typedef struct DrawTextContext {
     unsigned int default_fontsize;  ///< default font size to use
 
     int line_spacing;               ///< lines spacing in pixels
+    int word_spacing;               ///< word spacing in pixels
     short int draw_box;             ///< draw box around text - true or false
     int boxborderw;                 ///< box border width
     int use_kerning;                ///< font kerning is used - true/false
@@ -214,6 +215,7 @@ static const AVOption drawtext_options[]= {
     {"box",         "set box",              OFFSET(draw_box),           AV_OPT_TYPE_BOOL,   {.i64=0},     0,        1       , FLAGS},
     {"boxborderw",  "set box border width", OFFSET(boxborderw),         AV_OPT_TYPE_INT,    {.i64=0},     INT_MIN,  INT_MAX , FLAGS},
     {"line_spacing",  "set line spacing in pixels", OFFSET(line_spacing),   AV_OPT_TYPE_INT,    {.i64=0},     INT_MIN,  INT_MAX,FLAGS},
+    {"word_spacing",  "set word spacing in pixels", OFFSET(word_spacing),   AV_OPT_TYPE_INT,    {.i64=0},     INT_MIN,  INT_MAX,FLAGS},
     {"fontsize",    "set font size",        OFFSET(fontsize_expr),      AV_OPT_TYPE_STRING, {.str=NULL},  CHAR_MIN, CHAR_MAX , FLAGS},
     {"x",           "set x expression",     OFFSET(x_expr),             AV_OPT_TYPE_STRING, {.str="0"},   CHAR_MIN, CHAR_MAX, FLAGS},
     {"y",           "set y expression",     OFFSET(y_expr),             AV_OPT_TYPE_STRING, {.str="0"},   CHAR_MIN, CHAR_MAX, FLAGS},
@@ -1372,8 +1374,13 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
         /* save position */
         s->positions[i].x = x + glyph->bitmap_left;
         s->positions[i].y = y - glyph->bitmap_top + y_max;
-        if (code == '\t') x  = (x / s->tabsize + 1)*s->tabsize;
-        else              x += glyph->advance;
+
+        if((code == ' ' || code == '\t') && s->word_spacing > 0)
+            x += s->word_spacing;
+        else if (code == '\t')
+            x  = (x / s->tabsize + 1) * s->tabsize;
+        else
+            x += glyph->advance;
     }
 
     max_text_line_w = FFMAX(x, max_text_line_w);
