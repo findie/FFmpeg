@@ -57,7 +57,7 @@ apt-get -y install \
     texinfo wget zlib1g-dev fontconfig \
     libvpx-dev libx264-dev libx265-dev \
     libfdk-aac-dev libmp3lame-dev libopus-dev \
-    yasm nasm
+    yasm nasm libxvidcore-dev
     
 ```
 #### Build
