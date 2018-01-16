@@ -1,3 +1,14 @@
+# Findie FFmpeg Fork
+
+The scope of this fork is to quickly add functionality to FFmpeg without waiting for the main project to accept PR changes.<br/>
+Changes in this fork will eventually find their way through a patch to the [main FFmpeg repository](http://source.ffmpeg.org).  
+
+
+_**Findie tailored build guide [here](https://github.com/findie/FFmpeg/blob/findie/build.md)**_
+
+___
+___
+
 FFmpeg README
 =============
 
