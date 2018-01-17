@@ -146,8 +146,6 @@ static int parse_data(AVFilterLink *inlink)
     var_values[VAR_T] = s->thickness;
     var_values[VAR_TIME] = s->time;
 
-    av_log(s, AV_LOG_VERBOSE, "before: x:%d y:%d w:%d h:%d\n", s->x, s->y, s->w, s->h);
-
     for (i = 0; i <= NUM_EXPR_EVALS; i++) {
         /* evaluate expressions, fail on last iteration */
         var_values[VAR_MAX] = inlink->w - s->x;
@@ -184,8 +182,6 @@ static int parse_data(AVFilterLink *inlink)
                                           NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
             goto fail;
         s->thickness = var_values[VAR_T] = res;
-
-        av_log(s, AV_LOG_VERBOSE, "after %d: x:%d y:%d w:%d h:%d\n", i, s->x, s->y, s->w, s->h);
     }
 
     /* if w or h are zero, use the input w/h */

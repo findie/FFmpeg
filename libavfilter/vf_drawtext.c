@@ -26,7 +26,7 @@
  * filter by Gustavo Sverzut Barbieri
  */
 
-#include "config.h"
+#include "../config.h"
 
 #if HAVE_SYS_TIME_H
 #include <sys/time.h>
@@ -43,18 +43,18 @@
 #include <fontconfig/fontconfig.h>
 #endif
 
-#include "libavutil/avstring.h"
-#include "libavutil/bprint.h"
-#include "libavutil/common.h"
-#include "libavutil/file.h"
-#include "libavutil/eval.h"
-#include "libavutil/opt.h"
-#include "libavutil/random_seed.h"
-#include "libavutil/parseutils.h"
-#include "libavutil/timecode.h"
-#include "libavutil/time_internal.h"
-#include "libavutil/tree.h"
-#include "libavutil/lfg.h"
+#include "../libavutil/avstring.h"
+#include "../libavutil/bprint.h"
+#include "../libavutil/common.h"
+#include "../libavutil/file.h"
+#include "../libavutil/eval.h"
+#include "../libavutil/opt.h"
+#include "../libavutil/random_seed.h"
+#include "../libavutil/parseutils.h"
+#include "../libavutil/timecode.h"
+#include "../libavutil/time_internal.h"
+#include "../libavutil/tree.h"
+#include "../libavutil/lfg.h"
 #include "avfilter.h"
 #include "drawutils.h"
 #include "formats.h"
@@ -169,6 +169,11 @@ typedef struct DrawTextContext {
     int tabsize;                    ///< tab size
     int fix_bounds;                 ///< do we let it go out of frame bounds - t/f
 
+    int clip_top;                   ///< clip text to the top
+    int clip_left;                  ///< clip text to the left
+    int clip_right;                 ///< clip text to the right
+    int clip_bottom;                ///< ckuo text to the bottom
+
     FFDrawContext dc;
     FFDrawColor fontcolor;          ///< foreground color
     FFDrawColor shadowcolor;        ///< shadow color
@@ -242,6 +247,11 @@ static const AVOption drawtext_options[]= {
     { "alpha",       "apply alpha while rendering", OFFSET(a_expr),      AV_OPT_TYPE_STRING, { .str = "1"     },          .flags = FLAGS },
     {"fix_bounds", "check and fix text coords to avoid clipping", OFFSET(fix_bounds), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS},
     {"start_number", "start frame number for n/frame_num variable", OFFSET(start_number), AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
+
+    {"clip_top"   , "top text clipping"   , OFFSET(clip_top)   , AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_left"  , "left text clipping"  , OFFSET(clip_left)  , AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_right" , "right text clipping" , OFFSET(clip_right) , AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_bottom", "bottom text clipping", OFFSET(clip_bottom), AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
 
 #if CONFIG_LIBFRIBIDI
     {"text_shaping", "attempt to shape text before drawing", OFFSET(text_shaping), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS},
@@ -1170,6 +1180,7 @@ static int expand_text(AVFilterContext *ctx, char *text, AVBPrint *bp)
 
 static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
                        int width, int height,
+                       int box_w, int box_h,
                        FFDrawColor *color,
                        int x, int y, int borderw)
 {
@@ -1178,6 +1189,11 @@ static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
     int i, x1, y1;
     uint8_t *p;
     Glyph *glyph = NULL;
+
+    int clip_top    = s->clip_top;
+    int clip_left   = s->clip_left;
+    int clip_right  = s->clip_right;
+    int clip_bottom = s->clip_bottom;
 
     for (i = 0, p = text; *p; i++) {
         FT_Bitmap bitmap;
@@ -1198,15 +1214,134 @@ static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
             glyph->bitmap.pixel_mode != FT_PIXEL_MODE_GRAY)
             return AVERROR(EINVAL);
 
-        x1 = s->positions[i].x+s->x+x - borderw;
-        y1 = s->positions[i].y+s->y+y - borderw;
+        x1 = s->positions[i].x + s->x + x - borderw;
+        y1 = s->positions[i].y + s->y + y - borderw;
 
-        ff_blend_mask(&s->dc, color,
-                      frame->data, frame->linesize, width, height,
-                      bitmap.buffer, bitmap.pitch,
-                      bitmap.width, bitmap.rows,
-                      bitmap.pixel_mode == FT_PIXEL_MODE_MONO ? 0 : 3,
-                      0, x1, y1);
+
+        int bit_w = bitmap.width;
+        int bit_h = bitmap.rows;
+
+        int delete_from_top    = FFMAX(clip_top  - s->positions[i].y, 0);
+        int delete_from_left   = FFMAX(clip_left - s->positions[i].x, 0);
+
+        int delete_from_bottom = FFMAX((s->positions[i].y + bit_h) - (box_h - clip_bottom), 0);
+        int delete_from_right  = FFMAX((s->positions[i].x + bit_w) - (box_w -  clip_right), 0);
+
+        unsigned short int should_draw  = !(
+            delete_from_top  >= bit_h || delete_from_bottom >= bit_h ||
+            delete_from_left >= bit_w || delete_from_right  >= bit_w
+        );
+
+        av_log(s, AV_LOG_VERBOSE, "drawing \"%c\" at x:%ld y:%ld (w:%d h:%d) delete(top:%d left:%d bottom:%d right:%d) visible:%d box(w:%d h:%d)\n",
+               code,
+               s->positions[i].x, s->positions[i].y,
+               bitmap.width, bitmap.rows,
+               delete_from_top,delete_from_left,delete_from_bottom,delete_from_right,
+               should_draw,
+               box_w, box_h
+        );
+
+        if(!should_draw)
+            continue;
+
+                 int    bitmap_pitch = bitmap.pitch;
+        unsigned int    bitmap_rows = bitmap.rows;
+        unsigned int    bitmap_width = bitmap.width;
+        unsigned int    bitmap_size = bitmap_width * bitmap_rows;
+        unsigned char*  bitmap_buffer = bitmap.buffer;
+
+        unsigned short  should_copy_buff = (
+            delete_from_top    || delete_from_right ||
+            delete_from_bottom || delete_from_left
+        );
+
+        if(should_copy_buff) {
+            bitmap_buffer = av_malloc(bitmap_size);
+            if(!bitmap_buffer)
+                return AVERROR(ENOMEM);
+
+            memcpy(bitmap_buffer, bitmap.buffer, bitmap_size);
+        }
+
+        if(delete_from_top > 0){
+            // adjust Y
+            y1 += delete_from_top;
+            // adjust rows
+            bitmap_rows -= delete_from_top;
+            // adjust size
+            bitmap_size = bitmap_width * bitmap_rows;
+
+            // copy "up" the bitmap
+            memcpy(
+                bitmap_buffer,
+                bitmap_buffer + (bitmap_width * delete_from_top),
+                bitmap_size
+            );
+        }
+        if(delete_from_bottom > 0){
+            bitmap_rows -= delete_from_bottom;
+            bitmap_size = bitmap_width * bitmap_rows;
+        }
+
+        if(delete_from_left > 0) {
+            // adjust X
+            x1 += delete_from_left;
+
+            unsigned int new_bitmap_width = bitmap_width - delete_from_left;
+            // for each for row
+            for(unsigned int row = 0; row < bitmap_rows; row ++){
+                memcpy(
+                    bitmap_buffer + (new_bitmap_width * row),
+                    bitmap_buffer + (bitmap_width     * row) + delete_from_left,
+                    new_bitmap_width
+                );
+            }
+
+            // adjust rows
+            bitmap_width = new_bitmap_width;
+            // adjust pitch
+            bitmap_pitch += bitmap_pitch > 0 ?
+                            // if pitch > 0 (down draw) decrease
+                            -delete_from_left :
+                            // if pitch >= 0 (up draw) increase
+                            +delete_from_left;
+            // adjust size
+            bitmap_size = bitmap_width * bitmap_rows;
+        }
+        if(delete_from_right > 0) {
+
+            unsigned int new_bitmap_width = bitmap_width - delete_from_right;
+            // for each for row
+            for(unsigned int row = 0; row < bitmap_rows; row ++){
+                memcpy(
+                        bitmap_buffer + (new_bitmap_width * row),
+                        bitmap_buffer + (bitmap_width     * row),
+                        new_bitmap_width
+                );
+            }
+
+            // adjust rows
+            bitmap_width = new_bitmap_width;
+            // adjust pitch
+            bitmap_pitch += bitmap_pitch > 0 ?
+                            // if pitch > 0 (down draw) decrease
+                            -delete_from_right :
+                            // if pitch >= 0 (up draw) increase
+                            +delete_from_right;
+            // adjust size
+            bitmap_size = bitmap_width * bitmap_rows;
+        }
+
+        ff_blend_mask(
+                &s->dc, color,
+                frame->data, frame->linesize, width, height,
+                bitmap_buffer, bitmap_pitch, bitmap_width, bitmap_rows,
+                bitmap.pixel_mode == FT_PIXEL_MODE_MONO ? 0 : 3,
+                0, x1, y1);
+
+        if(should_copy_buff) {
+            av_free(bitmap_buffer);
+        }
     }
 
     return 0;
@@ -1416,17 +1551,17 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
                            box_w + s->boxborderw * 2, box_h + s->boxborderw * 2);
 
     if (s->shadowx || s->shadowy) {
-        if ((ret = draw_glyphs(s, frame, width, height,
+        if ((ret = draw_glyphs(s, frame, width, height, box_w, box_h,
                                &shadowcolor, s->shadowx, s->shadowy, 0)) < 0)
             return ret;
     }
 
     if (s->borderw) {
-        if ((ret = draw_glyphs(s, frame, width, height,
+        if ((ret = draw_glyphs(s, frame, width, height, box_w, box_h,
                                &bordercolor, 0, 0, s->borderw)) < 0)
             return ret;
     }
-    if ((ret = draw_glyphs(s, frame, width, height,
+    if ((ret = draw_glyphs(s, frame, width, height, box_w, box_h,
                            &fontcolor, 0, 0, 0)) < 0)
         return ret;
 
