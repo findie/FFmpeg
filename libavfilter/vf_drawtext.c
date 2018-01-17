@@ -124,6 +124,8 @@ enum var_name {
     VAR_TEXT_W, VAR_TW,
     VAR_X,
     VAR_Y,
+    VAR_OFFSETX,
+    VAR_OFFSETY,
     VAR_PICT_TYPE,
     VAR_VARS_NB
 };
@@ -156,6 +158,10 @@ typedef struct DrawTextContext {
     int max_glyph_h;                ///< max glyph height
     int shadowx, shadowy;
     int borderw;                    ///< border width
+
+    int offsetx;                    ///< offset x
+    int offsety;                    ///< offset y
+
     char *fontsize_expr;            ///< expression for fontsize
     AVExpr *fontsize_pexpr;         ///< parsed expressions for fontsize
     unsigned int fontsize;          ///< font size to use
@@ -186,7 +192,10 @@ typedef struct DrawTextContext {
     struct AVTreeNode *glyphs;      ///< rendered glyphs, stored using the UTF-32 char code
     char *x_expr;                   ///< expression for x position
     char *y_expr;                   ///< expression for y position
+    char *offsetx_expr;             ///< expression for offsetx position
+    char *offsety_expr;             ///< expression for offsety position
     AVExpr *x_pexpr, *y_pexpr;      ///< parsed expressions for x and y
+    AVExpr *offsetx_pexpr, *offsety_pexpr;      ///< parsed expressions for offset x and y
     int64_t basetime;               ///< base pts time in the real world for display
     double var_values[VAR_VARS_NB];
     char   *a_expr;
@@ -224,6 +233,8 @@ static const AVOption drawtext_options[]= {
     {"fontsize",    "set font size",        OFFSET(fontsize_expr),      AV_OPT_TYPE_STRING, {.str=NULL},  CHAR_MIN, CHAR_MAX , FLAGS},
     {"x",           "set x expression",     OFFSET(x_expr),             AV_OPT_TYPE_STRING, {.str="0"},   CHAR_MIN, CHAR_MAX, FLAGS},
     {"y",           "set y expression",     OFFSET(y_expr),             AV_OPT_TYPE_STRING, {.str="0"},   CHAR_MIN, CHAR_MAX, FLAGS},
+    {"offsetx",     "set offsetx expression", OFFSET(offsetx_expr),     AV_OPT_TYPE_STRING, {.str="0"},   CHAR_MIN, CHAR_MAX, FLAGS},
+    {"offsety",     "set offsety expression", OFFSET(offsety_expr),     AV_OPT_TYPE_STRING, {.str="0"},   CHAR_MIN, CHAR_MAX, FLAGS},
     {"shadowx",     "set shadow x offset",  OFFSET(shadowx),            AV_OPT_TYPE_INT,    {.i64=0},     INT_MIN,  INT_MAX , FLAGS},
     {"shadowy",     "set shadow y offset",  OFFSET(shadowy),            AV_OPT_TYPE_INT,    {.i64=0},     INT_MIN,  INT_MAX , FLAGS},
     {"borderw",     "set border width",     OFFSET(borderw),            AV_OPT_TYPE_INT,    {.i64=0},     INT_MIN,  INT_MAX , FLAGS},
@@ -811,10 +822,12 @@ static av_cold void uninit(AVFilterContext *ctx)
 
     av_expr_free(s->x_pexpr);
     av_expr_free(s->y_pexpr);
+    av_expr_free(s->offsetx_pexpr);
+    av_expr_free(s->offsety_pexpr);
     av_expr_free(s->a_pexpr);
     av_expr_free(s->fontsize_pexpr);
 
-    s->x_pexpr = s->y_pexpr = s->a_pexpr = s->fontsize_pexpr = NULL;
+    s->x_pexpr = s->y_pexpr = s->a_pexpr = s->fontsize_pexpr = s->offsetx_pexpr = s->offsety_pexpr = NULL;
 
     av_freep(&s->positions);
     s->nb_positions = 0;
@@ -843,26 +856,34 @@ static int config_input(AVFilterLink *inlink)
     ff_draw_color(&s->dc, &s->bordercolor, s->bordercolor.rgba);
     ff_draw_color(&s->dc, &s->boxcolor,    s->boxcolor.rgba);
 
-    s->var_values[VAR_w]     = s->var_values[VAR_W]     = s->var_values[VAR_MAIN_W] = inlink->w;
-    s->var_values[VAR_h]     = s->var_values[VAR_H]     = s->var_values[VAR_MAIN_H] = inlink->h;
-    s->var_values[VAR_SAR]   = inlink->sample_aspect_ratio.num ? av_q2d(inlink->sample_aspect_ratio) : 1;
-    s->var_values[VAR_DAR]   = (double)inlink->w / inlink->h * s->var_values[VAR_SAR];
-    s->var_values[VAR_HSUB]  = 1 << s->dc.hsub_max;
-    s->var_values[VAR_VSUB]  = 1 << s->dc.vsub_max;
-    s->var_values[VAR_X]     = NAN;
-    s->var_values[VAR_Y]     = NAN;
-    s->var_values[VAR_T]     = NAN;
+    s->var_values[VAR_w]       = s->var_values[VAR_W]     = s->var_values[VAR_MAIN_W] = inlink->w;
+    s->var_values[VAR_h]       = s->var_values[VAR_H]     = s->var_values[VAR_MAIN_H] = inlink->h;
+    s->var_values[VAR_SAR]     = inlink->sample_aspect_ratio.num ? av_q2d(inlink->sample_aspect_ratio) : 1;
+    s->var_values[VAR_DAR]     = (double)inlink->w / inlink->h * s->var_values[VAR_SAR];
+    s->var_values[VAR_HSUB]    = 1 << s->dc.hsub_max;
+    s->var_values[VAR_VSUB]    = 1 << s->dc.vsub_max;
+    s->var_values[VAR_X]       = NAN;
+    s->var_values[VAR_Y]       = NAN;
+    s->var_values[VAR_OFFSETX] = NAN;
+    s->var_values[VAR_OFFSETY] = NAN;
+    s->var_values[VAR_T]       = NAN;
 
     av_lfg_init(&s->prng, av_get_random_seed());
 
     av_expr_free(s->x_pexpr);
     av_expr_free(s->y_pexpr);
+    av_expr_free(s->offsetx_pexpr);
+    av_expr_free(s->offsety_pexpr);
     av_expr_free(s->a_pexpr);
-    s->x_pexpr = s->y_pexpr = s->a_pexpr = NULL;
+    s->x_pexpr = s->y_pexpr = s->a_pexpr = s->offsetx_pexpr = s->offsety_pexpr = NULL;
 
     if ((ret = av_expr_parse(&s->x_pexpr, s->x_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
         (ret = av_expr_parse(&s->y_pexpr, s->y_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&s->offsetx_pexpr, s->offsetx_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&s->offsety_pexpr, s->offsety_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
         (ret = av_expr_parse(&s->a_pexpr, s->a_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0)
@@ -1392,6 +1413,12 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
     struct tm ltime;
     AVBPrint *bp = &s->expanded_text;
 
+    s->offsetx = s->var_values[VAR_OFFSETX] = av_expr_eval(s->offsetx_pexpr, s->var_values, &s->prng);
+    s->offsety = s->var_values[VAR_OFFSETY] = av_expr_eval(s->offsety_pexpr, s->var_values, &s->prng);
+
+    int offset_x = s->offsetx;
+    int offset_y = s->offsety;
+
     FFDrawColor fontcolor;
     FFDrawColor shadowcolor;
     FFDrawColor bordercolor;
@@ -1507,8 +1534,8 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
         }
 
         /* save position */
-        s->positions[i].x = x + glyph->bitmap_left;
-        s->positions[i].y = y - glyph->bitmap_top + y_max;
+        s->positions[i].x = x + glyph->bitmap_left + offset_x;
+        s->positions[i].y = y - glyph->bitmap_top + y_max + offset_y;
 
         if((code == ' ' || code == '\t') && s->word_spacing > 0)
             x += s->word_spacing;
