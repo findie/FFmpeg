@@ -178,7 +178,8 @@ typedef struct DrawTextContext {
     int clip_top;                   ///< clip text to the top
     int clip_left;                  ///< clip text to the left
     int clip_right;                 ///< clip text to the right
-    int clip_bottom;                ///< ckuo text to the bottom
+    int clip_bottom;                ///< clip text to the bottom
+    short int clip_enable;          ///< enable/disable clipping
 
     FFDrawContext dc;
     FFDrawColor fontcolor;          ///< foreground color
@@ -259,10 +260,11 @@ static const AVOption drawtext_options[]= {
     {"fix_bounds", "check and fix text coords to avoid clipping", OFFSET(fix_bounds), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS},
     {"start_number", "start frame number for n/frame_num variable", OFFSET(start_number), AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
 
-    {"clip_top"   , "top text clipping"   , OFFSET(clip_top)   , AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
-    {"clip_left"  , "left text clipping"  , OFFSET(clip_left)  , AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
-    {"clip_right" , "right text clipping" , OFFSET(clip_right) , AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
-    {"clip_bottom", "bottom text clipping", OFFSET(clip_bottom), AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_top"   , "top text clipping"   , OFFSET(clip_top)   , AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_left"  , "left text clipping"  , OFFSET(clip_left)  , AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_right" , "right text clipping" , OFFSET(clip_right) , AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_bottom", "bottom text clipping", OFFSET(clip_bottom), AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
+    {"clip_enable", "enable clipping"     , OFFSET(clip_enable), AV_OPT_TYPE_BOOL, {.i64=0}, 0,       1, FLAGS},
 
 #if CONFIG_LIBFRIBIDI
     {"text_shaping", "attempt to shape text before drawing", OFFSET(text_shaping), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS},
@@ -1215,6 +1217,7 @@ static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
     int clip_left   = s->clip_left;
     int clip_right  = s->clip_right;
     int clip_bottom = s->clip_bottom;
+    short int clip_enable = s->clip_enable;
 
     for (i = 0, p = text; *p; i++) {
         FT_Bitmap bitmap;
@@ -1238,6 +1241,17 @@ static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
         x1 = s->positions[i].x + s->x + x - borderw;
         y1 = s->positions[i].y + s->y + y - borderw;
 
+        // if clipping is not enabled, just blend and continue
+        if(!clip_enable) {
+            ff_blend_mask(&s->dc, color,
+                          frame->data, frame->linesize, width, height,
+                          bitmap.buffer, bitmap.pitch,
+                          bitmap.width, bitmap.rows,
+                          bitmap.pixel_mode == FT_PIXEL_MODE_MONO ? 0 : 3,
+                          0, x1, y1);
+            continue;
+        }
+
 
         int bit_w = bitmap.width;
         int bit_h = bitmap.rows;
@@ -1253,7 +1267,7 @@ static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
             delete_from_left >= bit_w || delete_from_right  >= bit_w
         );
 
-        av_log(s, AV_LOG_VERBOSE, "drawing \"%c\" at x:%ld y:%ld (w:%d h:%d) delete(top:%d left:%d bottom:%d right:%d) visible:%d box(w:%d h:%d)\n",
+        av_log(s, AV_LOG_DEBUG, "drawing \"%c\" at x:%ld y:%ld (w:%d h:%d) delete(top:%d left:%d bottom:%d right:%d) visible:%d box(w:%d h:%d)\n",
                code,
                s->positions[i].x, s->positions[i].y,
                bitmap.width, bitmap.rows,
