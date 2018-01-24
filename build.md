@@ -12,9 +12,9 @@ ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/
 FFmpeg: 
 ```bash
 brew install \
-    automake fdk-aac git lame libass libtool libvorbis libvpx \
+    automake git lame libass libtool libvorbis libvpx \
     opus sdl shtool texi2html theora wget x264 x265 xvid nasm \
-    fontconfig fribidi
+    fontconfig fribidi libvidstab 
 ```
 
 ### Compiling
@@ -24,11 +24,11 @@ FFmpeg:
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
 ./configure \
-    --enable-gpl  --enable-version3  --enable-nonfree \
+    --enable-gpl --enable-version3 \
     --enable-libvpx --enable-libx264 --enable-libx265 \
-    --enable-libass --enable-libfdk-aac --enable-libfreetype \
+    --enable-libass --enable-libfreetype \
     --enable-libopus --enable-libxvid --enable-libfontconfig --enable-libfribidi \
-    --enable-libmp3lame --enable-libtheora --enable-libvorbis && \
+    --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab && \
 \
 make build -j4 && ./ffmpeg -h 2>&1 | head -n3
 ```
@@ -56,7 +56,7 @@ apt-get -y install \
     libxcb-xfixes0-dev mercurial pkg-config \
     texinfo wget zlib1g-dev fontconfig \
     libvpx-dev libx264-dev libx265-dev \
-    libfdk-aac-dev libmp3lame-dev libopus-dev \
+    libmp3lame-dev libopus-dev \
     yasm nasm libxvidcore-dev libfribidi-dev
     
 ```
@@ -65,11 +65,11 @@ apt-get -y install \
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
 ./configure \
-    --enable-gpl  --enable-version3  --enable-nonfree \
+    --enable-gpl  --enable-version3 \
     --enable-libvpx --enable-libx264 --enable-libx265 \
-    --enable-libass --enable-libfdk-aac --enable-libfreetype \
+    --enable-libass --enable-libfreetype \
     --enable-libopus --enable-libxvid --enable-libfontconfig --enable-libfribidi \
-    --enable-libmp3lame --enable-libtheora --enable-libvorbis && \
+    --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab && \
 \
 make build -j4 && ./ffmpeg -h 2>&1 | head -n3
 ```
