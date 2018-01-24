@@ -12,7 +12,7 @@ ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/
 brew install \
     automake git lame libass libtool libvorbis libvpx \
     opus sdl shtool texi2html theora wget x264 x265 xvid nasm \
-    fontconfig fribidi libvidstab 
+    fontconfig fribidi libvidstab theora
 ```
 
 ### Ubuntu, Debian, Mint (for issues refer [here](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu))
@@ -30,7 +30,7 @@ apt-get -y install \
     texinfo wget zlib1g-dev fontconfig \
     libvpx-dev libx264-dev libx265-dev \
     libmp3lame-dev libopus-dev \
-    yasm nasm libxvidcore-dev libfribidi-dev
+    yasm nasm libxvidcore-dev libfribidi-dev libtheora-dev
     
 ```
 _For CentOS, RHEL, Fedora please follow guide [here](https://trac.ffmpeg.org/wiki/CompilationGuide/Centos)_<br/>
@@ -45,7 +45,7 @@ git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
     --enable-gpl --enable-version3 \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfreetype \
-    --enable-libopus --enable-libxvid --enable-libfontconfig --enable-libfribidi \
+    --enable-libopus --enable-libxvid --enable-fontconfig --enable-libfontconfig --enable-libtheora --enable-libfribidi \
     --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab && \
 \
 make build -j4 && ./ffmpeg -h 2>&1 | head -n3
