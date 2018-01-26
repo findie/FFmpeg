@@ -1,5 +1,10 @@
 # Findie Changelog
 
+#### 2018 01 26
+
+- vf_drawtext
+    - [4b728a1](https://github.com/findie/FFmpeg/commit/4b728a1673efdec99d47a3010d944fed4a5955b3) update `clip_*` to be expressions and to be accessed from other expressions
+
 #### 2018 01 18
 
 - vf_drawtext
