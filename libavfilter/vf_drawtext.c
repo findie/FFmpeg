@@ -87,6 +87,9 @@ static const char *const var_names[] = {
     "text_w", "tw",           ///< width  of the rendered text
     "x",
     "y",
+    "clip_enable",
+    "clip_top", "clip_bottom",
+    "clip_left", "clip_right",
     "pict_type",
     NULL
 };
@@ -126,6 +129,9 @@ enum var_name {
     VAR_Y,
     VAR_OFFSETX,
     VAR_OFFSETY,
+    VAR_CLIP_ENABLE,
+    VAR_CLIP_TOP,VAR_CLIP_BOTTOM,
+    VAR_CLIP_LEFT,VAR_CLIP_RIGHT,
     VAR_PICT_TYPE,
     VAR_VARS_NB
 };
@@ -195,8 +201,16 @@ typedef struct DrawTextContext {
     char *y_expr;                   ///< expression for y position
     char *offsetx_expr;             ///< expression for offsetx position
     char *offsety_expr;             ///< expression for offsety position
+    char *clip_enable_expr;         ///< expression for clip_enable flag
+    char *clip_top_expr;            ///< expression for clip_top position
+    char *clip_bottom_expr;         ///< expression for clip_bottom position
+    char *clip_left_expr;           ///< expression for clip_left position
+    char *clip_right_expr;          ///< expression for clip_right position
     AVExpr *x_pexpr, *y_pexpr;      ///< parsed expressions for x and y
     AVExpr *offsetx_pexpr, *offsety_pexpr;      ///< parsed expressions for offset x and y
+    AVExpr *clip_enable_pexpr;      ///< parsed expressions for clip_exable
+    AVExpr *clip_top_pexpr, *clip_bottom_pexpr;      ///< parsed expressions for clip_top & clip_bottom
+    AVExpr *clip_left_pexpr, *clip_right_pexpr;      ///< parsed expressions for clip_left & clip_right
     int64_t basetime;               ///< base pts time in the real world for display
     double var_values[VAR_VARS_NB];
     char   *a_expr;
@@ -260,11 +274,11 @@ static const AVOption drawtext_options[]= {
     {"fix_bounds", "check and fix text coords to avoid clipping", OFFSET(fix_bounds), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS},
     {"start_number", "start frame number for n/frame_num variable", OFFSET(start_number), AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS},
 
-    {"clip_top"   , "top text clipping"   , OFFSET(clip_top)   , AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
-    {"clip_left"  , "left text clipping"  , OFFSET(clip_left)  , AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
-    {"clip_right" , "right text clipping" , OFFSET(clip_right) , AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
-    {"clip_bottom", "bottom text clipping", OFFSET(clip_bottom), AV_OPT_TYPE_INT , {.i64=0}, 0, INT_MAX, FLAGS},
-    {"clip_enable", "enable clipping"     , OFFSET(clip_enable), AV_OPT_TYPE_BOOL, {.i64=0}, 0,       1, FLAGS},
+    {"clip_top"   , "top text clipping expression"   , OFFSET(clip_top_expr)   , AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, FLAGS},
+    {"clip_left"  , "left text clipping expression"  , OFFSET(clip_left_expr)  , AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, FLAGS},
+    {"clip_right" , "right text clipping expression" , OFFSET(clip_right_expr) , AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, FLAGS},
+    {"clip_bottom", "bottom text clipping expression", OFFSET(clip_bottom_expr), AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, FLAGS},
+    {"clip_enable", "enable clipping expression"     , OFFSET(clip_enable_expr), AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, FLAGS},
 
 #if CONFIG_LIBFRIBIDI
     {"text_shaping", "attempt to shape text before drawing", OFFSET(text_shaping), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS},
@@ -826,10 +840,16 @@ static av_cold void uninit(AVFilterContext *ctx)
     av_expr_free(s->y_pexpr);
     av_expr_free(s->offsetx_pexpr);
     av_expr_free(s->offsety_pexpr);
+    av_expr_free(s->clip_enable_pexpr);
+    av_expr_free(s->clip_top_pexpr);
+    av_expr_free(s->clip_bottom_pexpr);
+    av_expr_free(s->clip_left_pexpr);
+    av_expr_free(s->clip_right_pexpr);
     av_expr_free(s->a_pexpr);
     av_expr_free(s->fontsize_pexpr);
 
     s->x_pexpr = s->y_pexpr = s->a_pexpr = s->fontsize_pexpr = s->offsetx_pexpr = s->offsety_pexpr = NULL;
+    s->clip_enable_pexpr = s->clip_top_pexpr = s->clip_bottom_pexpr = s->clip_left_pexpr = s->clip_right_pexpr = NULL;
 
     av_freep(&s->positions);
     s->nb_positions = 0;
@@ -868,6 +888,11 @@ static int config_input(AVFilterLink *inlink)
     s->var_values[VAR_Y]       = NAN;
     s->var_values[VAR_OFFSETX] = NAN;
     s->var_values[VAR_OFFSETY] = NAN;
+    s->var_values[VAR_CLIP_ENABLE]  = NAN;
+    s->var_values[VAR_CLIP_TOP]     = NAN;
+    s->var_values[VAR_CLIP_LEFT]    = NAN;
+    s->var_values[VAR_CLIP_RIGHT]   = NAN;
+    s->var_values[VAR_CLIP_BOTTOM]  = NAN;
     s->var_values[VAR_T]       = NAN;
 
     av_lfg_init(&s->prng, av_get_random_seed());
@@ -876,17 +901,36 @@ static int config_input(AVFilterLink *inlink)
     av_expr_free(s->y_pexpr);
     av_expr_free(s->offsetx_pexpr);
     av_expr_free(s->offsety_pexpr);
+    av_expr_free(s->clip_enable_pexpr);
+    av_expr_free(s->clip_top_pexpr);
+    av_expr_free(s->clip_bottom_pexpr);
+    av_expr_free(s->clip_left_pexpr);
+    av_expr_free(s->clip_right_pexpr);
     av_expr_free(s->a_pexpr);
     s->x_pexpr = s->y_pexpr = s->a_pexpr = s->offsetx_pexpr = s->offsety_pexpr = NULL;
+    s->clip_enable_pexpr = s->clip_top_pexpr = s->clip_bottom_pexpr = s->clip_left_pexpr = s->clip_right_pexpr = NULL;
 
     if ((ret = av_expr_parse(&s->x_pexpr, s->x_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
         (ret = av_expr_parse(&s->y_pexpr, s->y_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+
         (ret = av_expr_parse(&s->offsetx_pexpr, s->offsetx_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
         (ret = av_expr_parse(&s->offsety_pexpr, s->offsety_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+
+        (ret = av_expr_parse(&s->clip_enable_pexpr, s->clip_enable_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&s->clip_top_pexpr, s->clip_top_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&s->clip_bottom_pexpr, s->clip_bottom_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&s->clip_left_pexpr, s->clip_left_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&s->clip_right_pexpr, s->clip_right_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+
         (ret = av_expr_parse(&s->a_pexpr, s->a_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0)
 
@@ -1574,6 +1618,12 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
     s->x = s->var_values[VAR_X] = av_expr_eval(s->x_pexpr, s->var_values, &s->prng);
     s->y = s->var_values[VAR_Y] = av_expr_eval(s->y_pexpr, s->var_values, &s->prng);
     s->x = s->var_values[VAR_X] = av_expr_eval(s->x_pexpr, s->var_values, &s->prng);
+
+    s->clip_enable = s->var_values[VAR_CLIP_ENABLE] = av_expr_eval(s->clip_enable_pexpr, s->var_values, &s->prng);
+    s->clip_top = s->var_values[VAR_CLIP_TOP] = av_expr_eval(s->clip_top_pexpr, s->var_values, &s->prng);
+    s->clip_bottom = s->var_values[VAR_CLIP_BOTTOM] = av_expr_eval(s->clip_bottom_pexpr, s->var_values, &s->prng);
+    s->clip_left = s->var_values[VAR_CLIP_LEFT] = av_expr_eval(s->clip_left_pexpr, s->var_values, &s->prng);
+    s->clip_right = s->var_values[VAR_CLIP_RIGHT] = av_expr_eval(s->clip_right_pexpr, s->var_values, &s->prng);
 
     update_alpha(s);
     update_color_with_alpha(s, &fontcolor  , s->fontcolor  );
