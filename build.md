@@ -17,6 +17,22 @@ brew install \
 
 ### Ubuntu, Debian, Mint (for issues refer [here](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu))
 
+#### VidStab Prerequisite
+```bash
+sudo apt install yasm nasm \
+                build-essential cmake automake autoconf \
+                libtool pkg-config libcurl4-openssl-dev \
+                intltool libxml2-dev libgtk2.0-dev \
+                libnotify-dev libglib2.0-dev libevent-dev \
+                checkinstall libavcodec-extra57
+
+git clone https://github.com/georgmartius/vid.stab.git
+cd vid.stab/
+cmake .
+make
+sudo make install
+```
+
 ```bash
 sudo su;
 
@@ -33,6 +49,7 @@ apt-get -y install \
     yasm nasm libxvidcore-dev libfribidi-dev libtheora-dev
     
 ```
+
 _For CentOS, RHEL, Fedora please follow guide [here](https://trac.ffmpeg.org/wiki/CompilationGuide/Centos)_<br/>
 _For Windows please follow guide [here](https://trac.ffmpeg.org/wiki/CompilationGuide#Windows)_
 
