@@ -1617,6 +1617,7 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
 
     s->x = s->var_values[VAR_X] = av_expr_eval(s->x_pexpr, s->var_values, &s->prng);
     s->y = s->var_values[VAR_Y] = av_expr_eval(s->y_pexpr, s->var_values, &s->prng);
+    /* It is necessary if x is expressed from y  */
     s->x = s->var_values[VAR_X] = av_expr_eval(s->x_pexpr, s->var_values, &s->prng);
 
     s->clip_enable = s->var_values[VAR_CLIP_ENABLE] = av_expr_eval(s->clip_enable_pexpr, s->var_values, &s->prng);
