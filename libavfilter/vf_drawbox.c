@@ -47,6 +47,7 @@ static const char *const var_names[] = {
     "h",              ///< height of the rendered box
     "w",              ///< width  of the rendered box
     "t",
+    "thickness",
     "time",
     "fill",
     NULL
@@ -65,6 +66,7 @@ enum var_name {
     VAR_H,
     VAR_W,
     VAR_T,
+    VAR_THICKNESS,
     VAR_TIME,
     VAR_MAX,
     VARS_NB
@@ -143,7 +145,8 @@ static int parse_data(AVFilterLink *inlink)
     var_values[VAR_Y] = s->y;
     var_values[VAR_H] = s->h;
     var_values[VAR_W] = s->w;
-    var_values[VAR_T] = s->thickness;
+    var_values[VAR_THICKNESS] = s->thickness;
+    var_values[VAR_T] = s->time;
     var_values[VAR_TIME] = s->time;
 
     for (i = 0; i <= NUM_EXPR_EVALS; i++) {
@@ -181,7 +184,7 @@ static int parse_data(AVFilterLink *inlink)
                                           var_names, var_values,
                                           NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
             goto fail;
-        s->thickness = var_values[VAR_T] = res;
+        s->thickness = var_values[VAR_THICKNESS] = res;
     }
 
     /* if w or h are zero, use the input w/h */
@@ -194,7 +197,7 @@ static int parse_data(AVFilterLink *inlink)
         return AVERROR(EINVAL);
     }
 
-    av_log(ctx, AV_LOG_VERBOSE, "x:%d y:%d w:%d h:%d color:0x%02X%02X%02X%02X\n",
+    av_log(ctx, AV_LOG_DEBUG, "x:%d y:%d w:%d h:%d color:0x%02X%02X%02X%02X\n",
            s->x, s->y, s->w, s->h,
            s->yuv_color[Y], s->yuv_color[U], s->yuv_color[V], s->yuv_color[A]);
 
@@ -225,7 +228,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
 
     s->time = frame->pts == AV_NOPTS_VALUE ?
               NAN : frame->pts * av_q2d(inlink->time_base);
-    av_log(s, AV_LOG_VERBOSE, "pts: %lld time base:%f time: %f\n", frame->pts, av_q2d(inlink->time_base), s->time);
+    av_log(s, AV_LOG_DEBUG, "pts: %lld time base:%f time: %f\n", frame->pts, av_q2d(inlink->time_base), s->time);
     parse_data(inlink);
 
     int plane, x, y, xb = s->x, yb = s->y;
