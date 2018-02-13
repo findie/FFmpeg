@@ -1,5 +1,10 @@
 # Findie Changelog
 
+#### 2018 02 13
+
+- vf_drawbox
+    - [a8cd882](https://github.com/findie/FFmpeg/commit/a8cd88258b2691dc36403140ef4b966dd515ee80) breaking change: `t` will stand for time in expressions, `thickness` for thickness
+
 #### 2018 01 26
 
 - vf_drawtext
