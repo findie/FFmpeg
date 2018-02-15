@@ -7492,8 +7492,11 @@ The x and y offset coordinates where the box is drawn.
 @item h
 The width and height of the drawn box.
 
-@item t
+@item thickness
 The thickness of the drawn box.
+
+@item t
+The current time of the frame.
 
 These constants allow the @var{x}, @var{y}, @var{w}, @var{h} and @var{t} expressions to refer to
 each other, so you may for example specify @code{y=x/dar} or @code{h=w/dar}.
@@ -7656,6 +7659,9 @@ The default value of @var{boxcolor} is "white".
 Set the line spacing in pixels of the border to be drawn around the box using @var{box}.
 The default value of @var{line_spacing} is 0.
 
+@item word_spacing
+Overrides the spacing of " " and "\t", set's the spacing between words in pixels.
+
 @item borderw
 Set the width of the border to be drawn around the text using @var{bordercolor}.
 The default value of @var{borderw} is 0.
@@ -7796,6 +7802,19 @@ If both @var{text} and @var{textfile} are specified, an error is thrown.
 @item reload
 If set to 1, the @var{textfile} will be reloaded before each frame.
 Be sure to update it atomically, or it may be read partially, or even fail.
+
+@item offsetx
+@item offsety
+The expressions which specify the text offset position from x/y.
+
+@item clip_enable
+The expressions which specify the if text clipping is enabled.
+
+@item clip_top
+@item clip_left
+@item clip_bottom
+@item clip_right
+The expressions which specify the amount of pixels from the edge to clip the text.
 
 @item x
 @item y
@@ -9192,6 +9211,33 @@ Sets the fps to 24, using abbreviation and rounding method to round to nearest:
 fps=fps=film:round=near
 @end example
 @end itemize
+
+@section framechange
+Output the amount in percentage of pixel changed between frames this format: "frame: %d change: %f"
+
+It accepts the following parameters:
+@table @option
+
+@item threshold
+The minimum amount of pixel change before a change is registered. The range is @code{0}-@code{255}. Default is @code{10}.
+
+@item mode
+The mode in which the pixels get counted. Default is @code{absolute}
+@table @option
+
+@item absolute
+a changed pixel counts as 1
+@item percentage
+a changed pixel counts as the absolute difference between the sources, divided by 255
+
+@end table
+
+
+@item show
+Render video frames with changes. The range is @code{0}-@code{1}. Default is @code{0}.
+
+@end table
+
 
 @section framepack
 
