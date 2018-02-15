@@ -1,4 +1,13 @@
 # Findie Changelog
+#### 2018 02 15 
+    
+- vf_framechange
+    - [a480486](https://github.com/findie/FFmpeg/commit/a480486c79d0e7f24ff7e343a912a48bf76628ab) added filter
+        - `threshold`: [`10`] the minimum amount of pixel change before a change is registered
+        - `mode`: [`absolute`] the mode in which the pixels get counted
+            - `absolute`: a changed pixel counts as 1
+            - `percentage`: a changed pixel counts as the absolute difference between the sources, divided by 255
+        - `show`: [`0`] render video frames with changes    
 
 #### 2018 02 13
 
