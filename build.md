@@ -24,7 +24,7 @@ sudo apt install yasm nasm \
                 libtool pkg-config libcurl4-openssl-dev \
                 intltool libxml2-dev libgtk2.0-dev \
                 libnotify-dev libglib2.0-dev libevent-dev \
-                checkinstall libavcodec-extra57
+                checkinstall libav-tools
 
 git clone https://github.com/georgmartius/vid.stab.git
 cd vid.stab/
@@ -36,8 +36,8 @@ sudo make install
 ```bash
 sudo su;
 
-apt-get update && \
-apt-get -y install \
+apt update && \
+apt -y install \
     autoconf automake build-essential cmake \
     git libass-dev libfreetype6-dev libsdl2-dev \
     libtheora-dev libtool libva-dev libvdpau-dev \
@@ -58,7 +58,7 @@ _For Windows please follow guide [here](https://trac.ffmpeg.org/wiki/Compilation
 ```bash
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
-./configure \
+./configure --enable-pthreads \
     --enable-gpl --enable-version3 \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfreetype \
@@ -68,3 +68,18 @@ git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 make build -j4 && ./ffmpeg -h 2>&1 | head -n3
 ```
 ___
+
+## Troubleshooting 
+
+### Linux
+
+#### libvidstab 
+
+In case you get errors like: 
+```bash
+ffmpeg: error while loading shared libraries: libvidstab.so.1.1: cannot open shared object file: No such file or directory
+```
+
+You can install libvidstab from:
+ - amd64 [page](https://debian.pkgs.org/9/multimedia-main-amd64/libvidstab1.0_0.98b-dmo1+deb8u1_amd64.deb.html) and [.deb file](http://www.deb-multimedia.org/pool/main/v/vid.stab/libvidstab1.0_0.98b-dmo1+deb8u1_amd64.deb)
+ - i386 [page](https://debian.pkgs.org/9/multimedia-main-i386/libvidstab1.0_0.98b-dmo1+deb8u1_i386.deb.html) and [.deb file](http://www.deb-multimedia.org/pool/main/v/vid.stab/libvidstab1.0_0.98b-dmo1+deb8u1_i386.deb)
