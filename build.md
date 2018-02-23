@@ -63,7 +63,8 @@ git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfreetype \
     --enable-libopus --enable-libxvid --enable-fontconfig --enable-libfontconfig --enable-libtheora --enable-libfribidi \
-    --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab && \
+    --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab \
+    --enable-swscale-alpha && \
 \
 make build -j4 && ./ffmpeg -h 2>&1 | head -n3
 ```
