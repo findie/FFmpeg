@@ -1,4 +1,24 @@
 # Findie Changelog
+
+#### 2018 02 27
+
+- vf_zoom
+    - [09e61dc](https://github.com/findie/FFmpeg/commit/09e61dc1f9091b0dee476a8d5c0124532895e066) added filter
+        - `zoom`/`z`: [`1`] expression to set the zooming of the frame
+        - `fillcolor`: [`black@0`] set the background color (used when zoom < 1 or frame has transparency)
+        - `interpolation`: [`fast_bilinear`] interpolation algorithm
+            - `fast_bilinear` 
+            - `bilinear` 
+            - `bicubic` 
+            - `x` 
+            - `point` 
+            - `area` 
+            - `bicublin` 
+            - `gauss` 
+            - `sinc` 
+            - `lanczos` 
+            - `spline` 
+
 #### 2018 02 15 
     
 - vf_framechange
