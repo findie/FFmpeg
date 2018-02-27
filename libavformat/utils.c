@@ -869,9 +869,9 @@ int ff_read_packet(AVFormatContext *s, AVPacket *pkt)
 
         if (!pkt->buf) {
             AVPacket tmp = { 0 };
-            ret = av_packet_ref(&tmp, pkt);
-            if (ret < 0)
-                return ret;
+            err = av_packet_ref(&tmp, pkt);
+            if (err < 0)
+                return err;
             *pkt = tmp;
         }
 
@@ -933,6 +933,7 @@ static int determinable_frame_size(AVCodecContext *avctx)
     case AV_CODEC_ID_MP1:
     case AV_CODEC_ID_MP2:
     case AV_CODEC_ID_MP3:
+    case AV_CODEC_ID_CODEC2:
         return 1;
     }
 
