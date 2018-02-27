@@ -16677,6 +16677,67 @@ Only deinterlace frames marked as interlaced.
 The default value is @code{all}.
 @end table
 
+@section zoom
+
+This filter will apply zoom ranging from @code{0} to @code{+inf}. It will not modify the size of the frame, and will always make sure that the zoomed section is in the center of the frame
+
+This filter accepts the following options:
+@table @option
+    @item zoom, z
+    Set the zoom expression. Default is @code{1}.
+
+    @item fillcolor
+    Set color that will fill the background when @code{zoom < 1} and/or when the frame has transparency. Default is @code{black@@0}
+
+    @item interpolation
+    Set the interpolation method for scaling. Default is @var{fast_bilinear}
+
+    @table @option
+        @item fast_bilinear
+
+        @item bilinear
+
+        @item bicubic
+
+        @item x
+
+        @item point
+
+        @item area
+
+        @item bicublin
+
+        @item gauss
+
+        @item sinc
+
+        @item lanczos
+
+        @item spline
+    @end table
+
+    Expressions can contain the following constants:
+
+    @table @option
+        @item t
+        Stream timestamp.
+
+        @item z
+        Last computed zoom.
+    @end table
+
+@end table
+@subsection Examples
+
+@itemize
+    @item
+    Zoom in to 1.5 and out to 0.5 based on time, set interp. to @code{bicubic} and the background color to @code{pink}
+    @example
+zoom=z="1 + sin(t*2) * 0.5":interpolation=bicubic:fillcolor="pink"
+    @end example
+@end itemize
+
+
 @section zoompan
 
 Apply Zoom & Pan effect.
