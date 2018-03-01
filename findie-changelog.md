@@ -1,5 +1,17 @@
 # Findie Changelog
 
+#### 2018 03 01
+
+- vf_drawbox
+    - [6b6097a](https://github.com/findie/FFmpeg/commit/6b6097a04660ea7d433415e23e8a3acf30d49a42) added color expressions 
+        - `color_alpha_expr`: manipulate the color's alpha channel
+        - `color_red_expr`  : manipulate the color's red channel
+        - `color_green_expr`: manipulate the color's green channel
+        - `color_blue_expr` : manipulate the color's blue channel
+        - `color_y_expr`    : manipulate the color's Y channel
+        - `color_u_expr`    : manipulate the color's U channel
+        - `color_v_expr`    : manipulate the color's V channel
+
 #### 2018 02 27
 
 - vf_zoom
