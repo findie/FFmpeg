@@ -7453,6 +7453,15 @@ check the @ref{color syntax,,"Color" section in the ffmpeg-utils manual,ffmpeg-u
 value @code{invert} is used, the box edge color is the same as the
 video with inverted luma.
 
+@item color_alpha_expr
+@item color_red_expr
+@item color_green_expr
+@item color_blue_expr
+@item color_y_expr
+@item color_u_expr
+@item color_v_expr
+Expressions to change the color per channel. if channel expression is not set, it defaults back to @code{color}'s channel value
+
 @item thickness, t
 The expression which sets the thickness of the box edge.
 A value of @code{fill} will create a filled box. Default value is @code{3}.
@@ -7527,6 +7536,12 @@ drawbox=x=10:y=20:w=200:h=60:color=red@@0.5
 Fill the box with pink color:
 @example
 drawbox=x=10:y=10:w=100:h=100:color=pink@@0.5:t=fill
+@end example
+
+@item
+Fill the box with pink color and oscilate green between 0 and 255:
+@example
+drawbox=x=10:y=10:w=100:h=100:color=pink@@0.5:t=fill:color_green_expr=127+sin(t*10)*127
 @end example
 
 @item

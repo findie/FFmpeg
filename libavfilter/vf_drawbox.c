@@ -25,12 +25,12 @@
  * that needs to write in the input frame.
  */
 
-#include "libavutil/colorspace.h"
-#include "libavutil/common.h"
-#include "libavutil/opt.h"
-#include "libavutil/eval.h"
-#include "libavutil/pixdesc.h"
-#include "libavutil/parseutils.h"
+#include "../libavutil/colorspace.h"
+#include "../libavutil/common.h"
+#include "../libavutil/opt.h"
+#include "../libavutil/eval.h"
+#include "../libavutil/pixdesc.h"
+#include "../libavutil/parseutils.h"
 #include "avfilter.h"
 #include "formats.h"
 #include "internal.h"
@@ -50,10 +50,12 @@ static const char *const var_names[] = {
     "thickness",
     "time",
     "fill",
+//    "c_r", "c_g", "c_b",
     NULL
 };
 
 enum { Y, U, V, A };
+enum { R, G, B };
 
 enum var_name {
     VAR_DAR,
@@ -69,6 +71,7 @@ enum var_name {
     VAR_THICKNESS,
     VAR_TIME,
     VAR_MAX,
+//    VAR_C_R, VAR_C_G, VAR_C_B,
     VARS_NB
 };
 
@@ -76,7 +79,10 @@ typedef struct DrawBoxContext {
     const AVClass *class;
     int x, y, w, h;
     int thickness;
+
     char *color_str;
+    uint8_t rgba_color[4];
+
     unsigned char yuv_color[4];
     int invert_color; ///< invert luma color
     int vsub, hsub;   ///< chroma subsampling
@@ -86,25 +92,40 @@ typedef struct DrawBoxContext {
     double time;           ///< time
     int have_alpha;
     int replace;
+
+    char *color_alpha_expr; /// < expression for alpha
+    char *color_red_expr, *color_green_expr, *color_blue_expr; /// < expression for dynamic color RGB
+    char *color_y_expr, *color_u_expr, *color_v_expr; /// < expression for dynamic color YUV
 } DrawBoxContext;
 
 static const int NUM_EXPR_EVALS = 5;
 
+static void apply_color_rgba (DrawBoxContext *s, uint8_t rgba_color[4])
+{
+    s->yuv_color[Y] = RGB_TO_Y_CCIR(rgba_color[0], rgba_color[1], rgba_color[2]);
+    s->yuv_color[U] = RGB_TO_U_CCIR(rgba_color[0], rgba_color[1], rgba_color[2], 0);
+    s->yuv_color[V] = RGB_TO_V_CCIR(rgba_color[0], rgba_color[1], rgba_color[2], 0);
+    s->yuv_color[A] = rgba_color[3];
+}
+static void apply_color_yuva (DrawBoxContext *s, uint8_t yuva_color[4])
+{
+    s->yuv_color[Y] = yuva_color[Y];
+    s->yuv_color[U] = yuva_color[U];
+    s->yuv_color[V] = yuva_color[V];
+    s->yuv_color[A] = yuva_color[A];
+}
+
 static av_cold int init(AVFilterContext *ctx)
 {
     DrawBoxContext *s = ctx->priv;
-    uint8_t rgba_color[4];
 
     if (!strcmp(s->color_str, "invert"))
         s->invert_color = 1;
-    else if (av_parse_color(rgba_color, s->color_str, -1, ctx) < 0)
+    else if (av_parse_color(s->rgba_color, s->color_str, -1, ctx) < 0)
         return AVERROR(EINVAL);
 
     if (!s->invert_color) {
-        s->yuv_color[Y] = RGB_TO_Y_CCIR(rgba_color[0], rgba_color[1], rgba_color[2]);
-        s->yuv_color[U] = RGB_TO_U_CCIR(rgba_color[0], rgba_color[1], rgba_color[2], 0);
-        s->yuv_color[V] = RGB_TO_V_CCIR(rgba_color[0], rgba_color[1], rgba_color[2], 0);
-        s->yuv_color[A] = rgba_color[3];
+        apply_color_rgba(s, s->rgba_color);
     }
 
     return 0;
@@ -128,6 +149,9 @@ static int query_formats(AVFilterContext *ctx)
 
 static int parse_data(AVFilterLink *inlink)
 {
+    // fixme optimize this routine
+    // parse_and_eval should only be eval (parsing should be done at init)
+    // there is no need to eval 5 times
     AVFilterContext *ctx = inlink->dst;
     DrawBoxContext *s = ctx->priv;
     double var_values[VARS_NB], res;
@@ -185,6 +209,78 @@ static int parse_data(AVFilterLink *inlink)
                                           NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
             goto fail;
         s->thickness = var_values[VAR_THICKNESS] = res;
+
+        // parse expression for A
+        if(s->color_alpha_expr[0])
+        {
+            av_log(s, AV_LOG_VERBOSE, "Enabled dynamic color on A! \n");
+
+            if ((ret = av_expr_parse_and_eval(&res, (expr = s->color_alpha_expr),
+                                              var_names, var_values,
+                                              NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
+                goto fail;
+            s->yuv_color[A] = s->rgba_color[A] = av_clip_uint8_c(res);
+            av_log(s, AV_LOG_VERBOSE, "A: %d \n", s->rgba_color[A]);
+        }
+
+        // parse expressions for RGB
+        if(s->color_red_expr[0] || s->color_green_expr[0] || s->color_blue_expr[0])
+        {
+            uint8_t rgba[4];
+            rgba[A] = s->yuv_color[A];
+            av_log(s, AV_LOG_VERBOSE, "Enabled dynamic color on RGB! \n");
+
+            for(uint8_t component = 0; component < 3; component++)
+            {
+                char *c_expr = component == 0 ? s->color_red_expr   :
+                               component == 1 ? s->color_green_expr :
+                                         /* 2 */s->color_blue_expr  ;
+
+                if(c_expr[0]){
+                    if ((ret = av_expr_parse_and_eval(&res, (expr = c_expr),
+                                                      var_names, var_values,
+                                                      NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
+                        goto fail;
+                    rgba[component] = av_clip_uint8_c(res);
+                } else {
+                    rgba[component] = s->rgba_color[component];
+                }
+            }
+
+            av_log(s, AV_LOG_VERBOSE, "R: %d G: %d G: %d\n", rgba[R], rgba[G], rgba[R]);
+
+            apply_color_rgba(s, rgba);
+        }
+
+        // parse expressions for YUV
+        if(s->color_y_expr[0] || s->color_u_expr[0] || s->color_v_expr[0])
+        {
+            uint8_t yuva[4];
+            yuva[A] = s->yuv_color[A];
+            av_log(s, AV_LOG_VERBOSE, "Enabled dynamic color on YUV! \n");
+
+            for(uint8_t component = 0; component < 3; component++)
+            {
+                char *c_expr = component == 0 ? s->color_y_expr   :
+                               component == 1 ? s->color_u_expr :
+                                         /* 2 */s->color_v_expr  ;
+
+                if(c_expr[0]){
+                    if ((ret = av_expr_parse_and_eval(&res, (expr = c_expr),
+                                                      var_names, var_values,
+                                                      NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0 && i == NUM_EXPR_EVALS)
+                        goto fail;
+                    yuva[component] = av_clip_uint8_c(res);
+                } else {
+                    yuva[component] = s->yuv_color[component];
+                }
+            }
+
+            av_log(s, AV_LOG_VERBOSE, "Y: %d U: %d V: %d\n", yuva[R], yuva[G], yuva[R]);
+
+            apply_color_yuva(s, yuva);
+        }
+
     }
 
     /* if w or h are zero, use the input w/h */
@@ -305,6 +401,17 @@ static const AVOption drawbox_options[] = {
     { "h",         "set height of the box",                        OFFSET(h_expr),    AV_OPT_TYPE_STRING, { .str="0" },       CHAR_MIN, CHAR_MAX, FLAGS },
     { "color",     "set color of the box",                         OFFSET(color_str), AV_OPT_TYPE_STRING, { .str = "black" }, CHAR_MIN, CHAR_MAX, FLAGS },
     { "c",         "set color of the box",                         OFFSET(color_str), AV_OPT_TYPE_STRING, { .str = "black" }, CHAR_MIN, CHAR_MAX, FLAGS },
+
+    { "color_alpha_expr",     "set channel alpha expression",                 OFFSET(color_alpha_expr), AV_OPT_TYPE_STRING, { .str = "" }, CHAR_MIN, CHAR_MAX, FLAGS },
+
+    { "color_red_expr",       "set channel red expression",                   OFFSET(color_red_expr),   AV_OPT_TYPE_STRING, { .str = "" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "color_green_expr",     "set channel green expression",                 OFFSET(color_green_expr), AV_OPT_TYPE_STRING, { .str = "" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "color_blue_expr",      "set channel blue expression",                  OFFSET(color_blue_expr),  AV_OPT_TYPE_STRING, { .str = "" }, CHAR_MIN, CHAR_MAX, FLAGS },
+
+    { "color_y_expr",         "set channel Y expression",                     OFFSET(color_y_expr),     AV_OPT_TYPE_STRING, { .str = "" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "color_u_expr",         "set channel U expression",                     OFFSET(color_u_expr),     AV_OPT_TYPE_STRING, { .str = "" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "color_v_expr",         "set channel V expression",                     OFFSET(color_v_expr),     AV_OPT_TYPE_STRING, { .str = "" }, CHAR_MIN, CHAR_MAX, FLAGS },
+
     { "thickness", "set the box thickness",                        OFFSET(t_expr),    AV_OPT_TYPE_STRING, { .str="3" },       CHAR_MIN, CHAR_MAX, FLAGS },
     { "t",         "set the box thickness",                        OFFSET(t_expr),    AV_OPT_TYPE_STRING, { .str="3" },       CHAR_MIN, CHAR_MAX, FLAGS },
     { "replace",   "replace color & alpha",                        OFFSET(replace),   AV_OPT_TYPE_BOOL,   { .i64=0 },         0,        1,        FLAGS },
