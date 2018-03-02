@@ -36,12 +36,12 @@
 #include "../libswscale/swscale.h"
 
 static const char *const var_names[] = {
-        "z",        /// -> last zoom
+        "z", "zoom",/// -> last zoom
         "t",        /// -> time stamp
         NULL
 };
 enum var_name {
-    VAR_Z,
+    VAR_Z, VAR_ZOOM,
     VAR_T,
     VAR_VARS_NB
 };
@@ -130,6 +130,7 @@ static int config_props(AVFilterLink *inlink)
     ff_draw_color(&zoom->dc, &zoom->fillcolor,   zoom->fillcolor.rgba );
 
     zoom->var_values[VAR_Z] = 1;
+    zoom->var_values[VAR_ZOOM] = 1;
     zoom->var_values[VAR_T] = NAN;
 
     int ret;
@@ -325,7 +326,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                                 NAN :
                                 in->pts * av_q2d(inlink->time_base);
     // eval Z (zoom)
-    zoom_val = zoom->zoom = zoom->var_values[VAR_Z] = av_expr_eval(zoom->zoom_expr, zoom->var_values, NULL);
+    zoom_val = zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = av_expr_eval(zoom->zoom_expr, zoom->var_values, NULL);
 
 
     // copy in the background

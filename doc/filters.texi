@@ -16737,7 +16737,7 @@ This filter accepts the following options:
         @item t
         Stream timestamp.
 
-        @item z
+        @item z, zoom
         Last computed zoom.
     @end table
 
