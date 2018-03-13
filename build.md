@@ -64,9 +64,12 @@ git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
     --enable-libass --enable-libfreetype \
     --enable-libopus --enable-libxvid --enable-fontconfig --enable-libfontconfig --enable-libtheora --enable-libfribidi \
     --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab \
-    --enable-swscale-alpha --enable-pic --extra-cflags="-fPIC" && \
+    --enable-swscale-alpha --enable-shared --enable-pic --extra-cflags="-fPIC" && \
 \
-make build -j4 && ./ffmpeg -h 2>&1 | head -n3
+make build -j `(nproc || echo 4)` && \
+sudo make install && \
+sudo ldconfig && \
+ffmpeg -h 2>&1 | grep -i findie || echo "FFMPEG not on findie branch"
 ```
 ___
 
