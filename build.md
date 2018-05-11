@@ -12,7 +12,7 @@ ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/
 brew install \
     automake git lame libass libtool libvorbis libvpx \
     opus sdl shtool texi2html theora wget x264 x265 xvid nasm \
-    fontconfig fribidi libvidstab theora
+    fontconfig fribidi libvidstab theora fdk-aac
 ```
 
 ### Ubuntu, Debian, Mint (for issues refer [here](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu))
@@ -46,7 +46,7 @@ apt -y install \
     texinfo wget zlib1g-dev fontconfig \
     libvpx-dev libx264-dev libx265-dev \
     libmp3lame-dev libopus-dev \
-    yasm nasm libxvidcore-dev libfribidi-dev libtheora-dev
+    yasm nasm libxvidcore-dev libfribidi-dev libtheora-dev libfdk-aac-dev
     
 ```
 
@@ -59,10 +59,10 @@ _For Windows please follow guide [here](https://trac.ffmpeg.org/wiki/Compilation
 ```bash
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
-./configure --enable-pthreads \
-    --enable-gpl --enable-version3 \
+./configure --enable-pthreads --enable-avresample \
+    --enable-gpl --enable-version3 --enable-nonfree \
     --enable-libvpx --enable-libx264 --enable-libx265 \
-    --enable-libass --enable-libfreetype \
+    --enable-libass --enable-libfdk-aac --enable-libfreetype \
     --enable-libopus --enable-libxvid --enable-fontconfig --enable-libfontconfig --enable-libtheora --enable-libfribidi \
     --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab \
     --enable-swscale-alpha --enable-shared && \
@@ -76,10 +76,10 @@ make install && \
 ```bash
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
-./configure --enable-pthreads \
-    --enable-gpl --enable-version3 \
+./configure --enable-pthreads --enable-avresample \
+    --enable-gpl --enable-version3 --enable-nonfree \
     --enable-libvpx --enable-libx264 --enable-libx265 \
-    --enable-libass --enable-libfreetype \
+    --enable-libass --enable-libfdk-aac --enable-libfreetype \
     --enable-libopus --enable-libxvid --enable-fontconfig --enable-libfontconfig --enable-libtheora --enable-libfribidi \
     --enable-libmp3lame --enable-libtheora --enable-libvorbis --enable-libvidstab \
     --enable-swscale-alpha --enable-shared --enable-pic --extra-cflags="-fPIC" && \
