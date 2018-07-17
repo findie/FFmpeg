@@ -1316,7 +1316,7 @@ static int h264_select_output_frame(H264Context *h)
     }
     out_of_order = MAX_DELAYED_PIC_COUNT - i;
     if(   cur->f->pict_type == AV_PICTURE_TYPE_B
-       || (h->last_pocs[MAX_DELAYED_PIC_COUNT-2] > INT_MIN && h->last_pocs[MAX_DELAYED_PIC_COUNT-1] - h->last_pocs[MAX_DELAYED_PIC_COUNT-2] > 2))
+       || (h->last_pocs[MAX_DELAYED_PIC_COUNT-2] > INT_MIN && h->last_pocs[MAX_DELAYED_PIC_COUNT-1] - (int64_t)h->last_pocs[MAX_DELAYED_PIC_COUNT-2] > 2))
         out_of_order = FFMAX(out_of_order, 1);
     if (out_of_order == MAX_DELAYED_PIC_COUNT) {
         av_log(h->avctx, AV_LOG_VERBOSE, "Invalid POC %d<%d\n", cur->poc, h->last_pocs[0]);
@@ -1406,6 +1406,11 @@ static int h264_field_start(H264Context *h, const H264SliceContext *sl,
         return ret;
 
     sps = h->ps.sps;
+
+    if (sps && sps->bitstream_restriction_flag &&
+        h->avctx->has_b_frames < sps->num_reorder_frames) {
+        h->avctx->has_b_frames = sps->num_reorder_frames;
+    }
 
     last_pic_droppable   = h->droppable;
     last_pic_structure   = h->picture_structure;

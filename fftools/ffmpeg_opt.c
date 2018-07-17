@@ -1103,9 +1103,22 @@ static int open_input_file(OptionsContext *o, const char *filename)
         }
     }
 
+    if (o->start_time != AV_NOPTS_VALUE && o->start_time_eof != AV_NOPTS_VALUE) {
+        av_log(NULL, AV_LOG_WARNING, "Cannot use -ss and -sseof both, using -ss for %s\n", filename);
+        o->start_time_eof = AV_NOPTS_VALUE;
+    }
+
     if (o->start_time_eof != AV_NOPTS_VALUE) {
-        if (ic->duration>0) {
+        if (o->start_time_eof >= 0) {
+            av_log(NULL, AV_LOG_ERROR, "-sseof value must be negative; aborting\n");
+            exit_program(1);
+        }
+        if (ic->duration > 0) {
             o->start_time = o->start_time_eof + ic->duration;
+            if (o->start_time < 0) {
+                av_log(NULL, AV_LOG_WARNING, "-sseof value seeks to before start of file %s; ignored\n", filename);
+                o->start_time = AV_NOPTS_VALUE;
+            }
         } else
             av_log(NULL, AV_LOG_WARNING, "Cannot use -sseof, duration of %s not known\n", filename);
     }
@@ -1324,6 +1337,7 @@ static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, e
     ost->file_index = nb_output_files - 1;
     ost->index      = idx;
     ost->st         = st;
+    ost->forced_kf_ref_pts = AV_NOPTS_VALUE;
     st->codecpar->codec_type = type;
 
     ret = choose_encoder(o, oc, ost);
@@ -3114,7 +3128,7 @@ void show_help_default(const char *opt, const char *arg)
            "    -h      -- print basic options\n"
            "    -h long -- print more options\n"
            "    -h full -- print all options (including all format and codec specific options, very long)\n"
-           "    -h type=name -- print all options for the named decoder/encoder/demuxer/muxer/filter\n"
+           "    -h type=name -- print all options for the named decoder/encoder/demuxer/muxer/filter/bsf\n"
            "    See man %s for detailed description of the options.\n"
            "\n", program_name);
 
@@ -3157,8 +3171,11 @@ void show_help_default(const char *opt, const char *arg)
 #if CONFIG_SWSCALE
         show_help_children(sws_get_class(), flags);
 #endif
+#if CONFIG_SWRESAMPLE
         show_help_children(swr_get_class(), AV_OPT_FLAG_AUDIO_PARAM);
+#endif
         show_help_children(avfilter_get_class(), AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_FILTERING_PARAM);
+        show_help_children(av_bsf_get_class(), AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_BSF_PARAM);
     }
 }
 
@@ -3336,7 +3353,7 @@ const OptionDef options[] = {
                         OPT_INPUT | OPT_OUTPUT,                      { .off = OFFSET(start_time) },
         "set the start time offset", "time_off" },
     { "sseof",          HAS_ARG | OPT_TIME | OPT_OFFSET |
-                        OPT_INPUT | OPT_OUTPUT,                      { .off = OFFSET(start_time_eof) },
+                        OPT_INPUT,                                   { .off = OFFSET(start_time_eof) },
         "set the start time offset relative to EOF", "time_off" },
     { "seek_timestamp", HAS_ARG | OPT_INT | OPT_OFFSET |
                         OPT_INPUT,                                   { .off = OFFSET(seek_timestamp) },

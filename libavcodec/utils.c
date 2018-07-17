@@ -312,7 +312,10 @@ void avcodec_align_dimensions2(AVCodecContext *s, int *width, int *height,
 
     *width  = FFALIGN(*width, w_align);
     *height = FFALIGN(*height, h_align);
-    if (s->codec_id == AV_CODEC_ID_H264 || s->lowres) {
+    if (s->codec_id == AV_CODEC_ID_H264 || s->lowres ||
+        s->codec_id == AV_CODEC_ID_VP5  || s->codec_id == AV_CODEC_ID_VP6 ||
+        s->codec_id == AV_CODEC_ID_VP6F || s->codec_id == AV_CODEC_ID_VP6A
+    ) {
         // some of the optimized chroma MC reads one line too much
         // which is also done in mpeg decoders with lowres > 0
         *height += 2;
@@ -671,6 +674,7 @@ int attribute_align_arg avcodec_open2(AVCodecContext *avctx, const AVCodec *code
         av_freep(&avctx->subtitle_header);
 
     if (avctx->channels > FF_SANE_NB_CHANNELS) {
+        av_log(avctx, AV_LOG_ERROR, "Too many channels: %d\n", avctx->channels);
         ret = AVERROR(EINVAL);
         goto free_and_end;
     }
@@ -1533,6 +1537,7 @@ static int get_audio_frame_duration(enum AVCodecID id, int sr, int ch, int ba,
     case AV_CODEC_ID_GSM_MS:       return  320;
     case AV_CODEC_ID_MP1:          return  384;
     case AV_CODEC_ID_ATRAC1:       return  512;
+    case AV_CODEC_ID_ATRAC9:
     case AV_CODEC_ID_ATRAC3:       return 1024 * framecount;
     case AV_CODEC_ID_ATRAC3P:      return 2048;
     case AV_CODEC_ID_MP2:

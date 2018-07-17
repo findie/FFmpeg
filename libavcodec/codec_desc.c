@@ -1602,6 +1602,7 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .name      = "av1",
         .long_name = NULL_IF_CONFIG_SMALL("Alliance for Open Media AV1"),
         .props     = AV_CODEC_PROP_LOSSY,
+        .profiles  = NULL_IF_CONFIG_SMALL(ff_av1_profiles),
     },
     {
         .id        = AV_CODEC_ID_BITPACKED,
@@ -2870,6 +2871,20 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .long_name = NULL_IF_CONFIG_SMALL("aptX HD (Audio Processing Technology for Bluetooth)"),
         .props     = AV_CODEC_PROP_LOSSY,
     },
+    {
+        .id        = AV_CODEC_ID_SBC,
+        .type      = AVMEDIA_TYPE_AUDIO,
+        .name      = "sbc",
+        .long_name = NULL_IF_CONFIG_SMALL("SBC (low-complexity subband codec)"),
+        .props     = AV_CODEC_PROP_LOSSY,
+    },
+    {
+        .id        = AV_CODEC_ID_ATRAC9,
+        .type      = AVMEDIA_TYPE_AUDIO,
+        .name      = "atrac9",
+        .long_name = NULL_IF_CONFIG_SMALL("ATRAC9 (Adaptive TRansform Acoustic Coding 9)"),
+        .props     = AV_CODEC_PROP_LOSSY,
+    },
 
     /* subtitle codecs */
     {
@@ -3039,6 +3054,14 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .long_name = NULL_IF_CONFIG_SMALL("HDMV Text subtitle"),
         .props     = AV_CODEC_PROP_TEXT_SUB,
     },
+    {
+        .id        = AV_CODEC_ID_TTML,
+        .type      = AVMEDIA_TYPE_SUBTITLE,
+        .name      = "ttml",
+        .long_name = NULL_IF_CONFIG_SMALL("Timed Text Markup Language"),
+        .props     = AV_CODEC_PROP_TEXT_SUB,
+    },
+
 
     /* other kind of codecs and pseudo-codecs */
     {

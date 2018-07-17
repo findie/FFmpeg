@@ -762,6 +762,8 @@ static int vaapi_encode_truncate_gop(AVCodecContext *avctx)
     VAAPIEncodeContext *ctx = avctx->priv_data;
     VAAPIEncodePicture *pic, *last_pic, *next;
 
+    av_assert0(!ctx->pic_start || ctx->pic_start->input_available);
+
     // Find the last picture we actually have input for.
     for (pic = ctx->pic_start; pic; pic = pic->next) {
         if (!pic->input_available)
@@ -770,8 +772,6 @@ static int vaapi_encode_truncate_gop(AVCodecContext *avctx)
     }
 
     if (pic) {
-        av_assert0(last_pic);
-
         if (last_pic->type == PICTURE_TYPE_B) {
             // Some fixing up is required.  Change the type of this
             // picture to P, then modify preceding B references which
@@ -1096,10 +1096,10 @@ static av_cold int vaapi_encode_config_attributes(AVCodecContext *avctx)
                 goto fail;
             }
             if (avctx->max_b_frames > 0 && ref_l1 < 1) {
-                av_log(avctx, AV_LOG_ERROR, "B frames are not "
-                       "supported (%#x).\n", attr[i].value);
-                err = AVERROR(EINVAL);
-                goto fail;
+                av_log(avctx, AV_LOG_WARNING, "B frames are not "
+                       "supported (%#x) by the underlying driver.\n",
+                       attr[i].value);
+                avctx->max_b_frames = 0;
             }
         }
         break;

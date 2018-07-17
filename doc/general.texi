@@ -17,6 +17,14 @@ for more formats. None of them are used by default, their use has to be
 explicitly requested by passing the appropriate flags to
 @command{./configure}.
 
+@section Alliance for Open Media libaom
+
+FFmpeg can make use of the libaom library for AV1 decoding.
+
+Go to @url{http://aomedia.org/} and follow the instructions for
+installing the library. Then pass @code{--enable-libaom} to configure to
+enable it.
+
 @section OpenJPEG
 
 FFmpeg can use the OpenJPEG libraries for encoding/decoding J2K videos.  Go to
@@ -38,9 +46,10 @@ upgrade FFmpeg's license to LGPL version 3 (or if you have enabled
 GPL components, GPL version 3) by passing @code{--enable-version3} to configure in
 order to use it.
 
-The Fraunhofer AAC library is licensed under a license incompatible to the GPL
-and is not known to be compatible to the LGPL. Therefore, you have to pass
-@code{--enable-nonfree} to configure to use it.
+The license of the Fraunhofer AAC library is incompatible with the GPL.
+Therefore, for GPL builds, you have to pass @code{--enable-nonfree} to
+configure in order to use it. To the best of our knowledge, it is
+compatible with the LGPL.
 @end float
 
 @subsection OpenCORE AMR
@@ -63,7 +72,7 @@ Then pass @code{--enable-libvo-amrwbenc} to configure to enable it.
 
 @subsection Fraunhofer AAC library
 
-FFmpeg can make use of the Fraunhofer AAC library for AAC encoding.
+FFmpeg can make use of the Fraunhofer AAC library for AAC decoding & encoding.
 
 Go to @url{http://sourceforge.net/projects/opencore-amr/} and follow the
 instructions for installing the library.
@@ -501,6 +510,7 @@ library:
 @item raw NULL                  @tab X @tab
 @item raw video                 @tab X @tab X
 @item raw id RoQ                @tab X @tab
+@item raw SBC                   @tab X @tab X
 @item raw Shorten               @tab   @tab X
 @item raw TAK                   @tab   @tab X
 @item raw TrueHD                @tab X @tab X
@@ -550,7 +560,7 @@ library:
 @item SAP                       @tab X @tab X
 @item SBG                       @tab   @tab X
 @item SDP                       @tab   @tab X
-@item Sega FILM/CPK             @tab   @tab X
+@item Sega FILM/CPK             @tab X @tab X
     @tab Used in many Sega Saturn console games.
 @item Silicon Graphics Movie    @tab   @tab X
 @item Sierra SOL                @tab   @tab X
@@ -718,6 +728,8 @@ following image formats are supported:
 @item Autodesk Animator Flic video  @tab     @tab  X
 @item Autodesk RLE           @tab     @tab  X
     @tab fourcc: AASC
+@item AV1                    @tab     @tab  E
+    @tab Supported through external library libaom
 @item Avid 1:1 10-bit RGB Packer  @tab  X  @tab  X
     @tab fourcc: AVrp
 @item AVS (Audio Video Standard) video  @tab     @tab  X
@@ -1141,6 +1153,8 @@ following image formats are supported:
     @tab Real low bitrate AC-3 codec
 @item RealAudio Lossless     @tab     @tab  X
 @item RealAudio SIPR / ACELP.NET @tab     @tab  X
+@item SBC (low-complexity subband codec) @tab  X  @tab  X
+    @tab Used in Bluetooth A2DP
 @item Shorten                @tab     @tab  X
 @item Sierra VMD audio       @tab     @tab  X
     @tab Used in Sierra VMD files.

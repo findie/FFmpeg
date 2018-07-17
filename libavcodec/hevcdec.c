@@ -408,6 +408,11 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
         *fmt++ = AV_PIX_FMT_CUDA;
 #endif
         break;
+    case AV_PIX_FMT_YUV420P12:
+#if CONFIG_HEVC_NVDEC_HWACCEL
+        *fmt++ = AV_PIX_FMT_CUDA;
+#endif
+        break;
     }
 
     *fmt++ = sps->pix_fmt;
@@ -2914,7 +2919,7 @@ static int decode_nal_unit(HEVCContext *s, const H2645NAL *nal)
         if (
             (s->avctx->skip_frame >= AVDISCARD_BIDIR && s->sh.slice_type == HEVC_SLICE_B) ||
             (s->avctx->skip_frame >= AVDISCARD_NONINTRA && s->sh.slice_type != HEVC_SLICE_I) ||
-            (s->avctx->skip_frame >= AVDISCARD_NONKEY && !IS_IDR(s))) {
+            (s->avctx->skip_frame >= AVDISCARD_NONKEY && !IS_IRAP(s))) {
             break;
         }
 
