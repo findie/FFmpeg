@@ -394,6 +394,7 @@ OBJS-$(CONFIG_ZOOMPAN_FILTER)                += vf_zoompan.o
 OBJS-$(CONFIG_ZOOM_FILTER)                   += vf_zoom.o
 OBJS-$(CONFIG_ZSCALE_FILTER)                 += vf_zscale.o
 OBJS-$(CONFIG_FRAMECHANGE_FILTER)            += vf_framechange.o
+OBJS-$(CONFIG_SSIMCHANGE_FILTER)             += vf_ssimchange.o
 
 OBJS-$(CONFIG_ALLRGB_FILTER)                 += vsrc_testsrc.o
 OBJS-$(CONFIG_ALLYUV_FILTER)                 += vsrc_testsrc.o
