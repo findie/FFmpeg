@@ -1,5 +1,10 @@
 # Findie Changelog
 
+#### 2018 07 18
+
+- vf_framechange
+    - [ef56b71](https://github.com/findie/FFmpeg/commit/ef56b71961800b1df2b7e73205481ac01f8d92f2) added filter
+
 #### 2018 03 01
 
 - vf_drawbox
