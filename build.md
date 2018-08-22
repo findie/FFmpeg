@@ -105,3 +105,7 @@ ffmpeg: error while loading shared libraries: libvidstab.so.1.1: cannot open sha
 You can install libvidstab from:
  - amd64 [page](https://debian.pkgs.org/9/multimedia-main-amd64/libvidstab1.0_0.98b-dmo1+deb8u1_amd64.deb.html) and [.deb file](http://www.deb-multimedia.org/pool/main/v/vid.stab/libvidstab1.0_0.98b-dmo1+deb8u1_amd64.deb)
  - i386 [page](https://debian.pkgs.org/9/multimedia-main-i386/libvidstab1.0_0.98b-dmo1+deb8u1_i386.deb.html) and [.deb file](http://www.deb-multimedia.org/pool/main/v/vid.stab/libvidstab1.0_0.98b-dmo1+deb8u1_i386.deb)
+
+### Debugging
+#### *db (lldb/gdb)
+Add `--disable-stripping --disable-optimizations --enable-debug=3` to configure step

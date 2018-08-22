@@ -178,7 +178,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                 &ssimchange->dsp,
                 in->data[i], in->linesize[i],
                 ssimchange->frame_prev->data[i], ssimchange->frame_prev->linesize[i],
-                in->width, in->height,
+                ssimchange->planewidth[i], ssimchange->planeheight[i],
                 ssimchange->temp, ssimchange->max
             );
             ssimv += ssimchange->coefs[i] * c[i];
@@ -192,9 +192,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_frame_free(&ssimchange->frame_prev);
     }
 
-    // if frame was altered, keep the original as previous
-    // else clone the in image
     ssimchange->frame_prev = av_frame_clone(in);
+	  if (!ssimchange->frame_prev)
+	  	return AVERROR(ENOMEM);
 
     return ff_filter_frame(outlink, in);
 }
