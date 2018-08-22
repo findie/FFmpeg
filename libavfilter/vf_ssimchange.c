@@ -170,7 +170,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 
     if(ssimchange->frame_prev) {
 
-        float c[4];
+        float c[4] = {0, 0, 0, 0};
         float ssimv = 0.0;
 
         for(i = 0; i < ssimchange->nb_components; i++){
@@ -184,9 +184,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
             ssimv += ssimchange->coefs[i] * c[i];
         }
 
-        av_log(ssimchange, AV_LOG_INFO, "frame: %d ssim: %f\n",
+        av_log(ssimchange, AV_LOG_INFO, "frame: %d ssim: %f c: %f %f %f %f\n",
                frame_nr,
-               ssimv
+               ssimv,
+               c[0], c[1], c[2], c[3]
         );
 
         av_frame_free(&ssimchange->frame_prev);
