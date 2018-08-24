@@ -82,6 +82,7 @@ static av_cold int init(AVFilterContext *ctx)
 static int query_formats(AVFilterContext *ctx)
 {
     static const enum AVPixelFormat pix_fmts[] = {
+            AV_PIX_FMT_YUV420P,
             AV_PIX_FMT_GRAY8,
             AV_PIX_FMT_NONE
     };
