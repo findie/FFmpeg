@@ -196,6 +196,8 @@ OBJS-$(CONFIG_DESHAKE_FILTER)                += vf_deshake.o
 OBJS-$(CONFIG_DESPILL_FILTER)                += vf_despill.o
 OBJS-$(CONFIG_DETELECINE_FILTER)             += vf_detelecine.o
 OBJS-$(CONFIG_DILATION_FILTER)               += vf_neighbor.o
+OBJS-$(CONFIG_DILATION_OPENCL_FILTER)        += vf_neighbor_opencl.o opencl.o \
+                                                opencl/neighbor.o
 OBJS-$(CONFIG_DISPLACE_FILTER)               += vf_displace.o framesync.o
 OBJS-$(CONFIG_DOUBLEWEAVE_FILTER)            += vf_weave.o
 OBJS-$(CONFIG_DRAWBOX_FILTER)                += vf_drawbox.o
@@ -207,6 +209,8 @@ OBJS-$(CONFIG_ELBG_FILTER)                   += vf_elbg.o
 OBJS-$(CONFIG_ENTROPY_FILTER)                += vf_entropy.o
 OBJS-$(CONFIG_EQ_FILTER)                     += vf_eq.o
 OBJS-$(CONFIG_EROSION_FILTER)                += vf_neighbor.o
+OBJS-$(CONFIG_EROSION_OPENCL_FILTER)         += vf_neighbor_opencl.o opencl.o \
+                                                opencl/neighbor.o
 OBJS-$(CONFIG_EXTRACTPLANES_FILTER)          += vf_extractplanes.o
 OBJS-$(CONFIG_FADE_FILTER)                   += vf_fade.o
 OBJS-$(CONFIG_FFTDNOIZ_FILTER)               += vf_fftdnoiz.o
@@ -228,6 +232,7 @@ OBJS-$(CONFIG_FSPP_FILTER)                   += vf_fspp.o
 OBJS-$(CONFIG_GBLUR_FILTER)                  += vf_gblur.o
 OBJS-$(CONFIG_GEQ_FILTER)                    += vf_geq.o
 OBJS-$(CONFIG_GRADFUN_FILTER)                += vf_gradfun.o
+OBJS-$(CONFIG_GREYEDGE_FILTER)               += vf_colorconstancy.o
 OBJS-$(CONFIG_HALDCLUT_FILTER)               += vf_lut3d.o framesync.o
 OBJS-$(CONFIG_HFLIP_FILTER)                  += vf_hflip.o
 OBJS-$(CONFIG_HISTEQ_FILTER)                 += vf_histeq.o
@@ -364,7 +369,7 @@ OBJS-$(CONFIG_TILE_FILTER)                   += vf_tile.o
 OBJS-$(CONFIG_TINTERLACE_FILTER)             += vf_tinterlace.o
 OBJS-$(CONFIG_TLUT2_FILTER)                  += vf_lut2.o framesync.o
 OBJS-$(CONFIG_TMIX_FILTER)                   += vf_mix.o framesync.o
-OBJS-$(CONFIG_TONEMAP_FILTER)                += vf_tonemap.o
+OBJS-$(CONFIG_TONEMAP_FILTER)                += vf_tonemap.o colorspace.o
 OBJS-$(CONFIG_TONEMAP_OPENCL_FILTER)         += vf_tonemap_opencl.o colorspace.o opencl.o \
                                                 opencl/tonemap.o opencl/colorspace_common.o
 OBJS-$(CONFIG_TRANSPOSE_FILTER)              += vf_transpose.o

@@ -15,6 +15,9 @@ version <next>:
 - vc1 decoder is now bit-exact
 - ATRAC9 decoder
 - lensfun wrapper filter
+- colorconstancy filter
+- AVS2 video decoder via libdavs2
+- IMM4 video decoder
 
 
 version 4.0:

@@ -5431,13 +5431,13 @@ The filter accepts the following options:
 
 @table @option
 @item sizeX
-Set horizontal kernel size.
+Set horizontal radius size.
 
 @item planes
 Set which planes to filter. By default all planes are filtered.
 
 @item sizeY
-Set vertical kernel size, if zero it will be same as @code{sizeX}.
+Set vertical radius size, if zero it will be same as @code{sizeX}.
 Default is @code{0}.
 @end table
 
@@ -10001,6 +10001,47 @@ gradfun=radius=8
 
 @end itemize
 
+@section greyedge
+A color constancy variation filter which estimates scene illumination via grey edge algorithm
+and corrects the scene colors accordingly.
+
+See: @url{https://staff.science.uva.nl/th.gevers/pub/GeversTIP07.pdf}
+
+The filter accepts the following options:
+
+@table @option
+@item difford
+The order of differentiation to be applied on the scene. Must be chosen in the range
+[0,2] and default value is 1.
+
+@item minknorm
+The Minkowski parameter to be used for calculating the Minkowski distance. Must
+be chosen in the range [0,20] and default value is 1. Set to 0 for getting
+max value instead of calculating Minkowski distance.
+
+@item sigma
+The standard deviation of Gaussian blur to be applied on the scene. Must be
+chosen in the range [0,1024.0] and default value = 1. floor( @var{sigma} * break_off_sigma(3) )
+can't be euqal to 0 if @var{difford} is greater than 0.
+@end table
+
+@subsection Examples
+@itemize
+
+@item
+Grey Edge:
+@example
+greyedge=difford=1:minknorm=5:sigma=2
+@end example
+
+@item
+Max Edge:
+@example
+greyedge=difford=1:minknorm=0:sigma=2
+@end example
+
+@end itemize
+
 @anchor{haldclut}
 @section haldclut
 
@@ -10888,7 +10929,7 @@ The obtained VMAF score is printed through the logging system.
 
 It requires Netflix's vmaf library (libvmaf) as a pre-requisite.
 After installing the library it can be enabled using:
-@code{./configure --enable-libvmaf}.
+@code{./configure --enable-libvmaf --enable-version3}.
 If no model path is specified it uses the default model: @code{vmaf_v0.6.1.pkl}.
 
 The filter has following options:
@@ -10922,6 +10963,15 @@ Enables computing ms_ssim along with vmaf.
 
 @item pool
 Set the pool method (mean, min or harmonic mean) to be used for computing vmaf.
+
+@item n_threads
+Set number of threads to be used when computing vmaf.
+
+@item n_subsample
+Set interval for frame subsampling used when computing vmaf.
+
+@item enable_conf_interval
+Enables confidence interval.
 @end table
 
 This filter also supports the @ref{framesync} options.
@@ -15414,6 +15464,65 @@ option may cause flicker since the B-Frames have often larger QP. Default is
 @code{0} (not enabled).
 @end table
 
+@section sr
+
+Scale the input by applying one of the super-resolution methods based on
+convolutional neural networks.
+
+Training scripts as well as scripts for model generation are provided in
+the repository at @url{https://github.com/HighVoltageRocknRoll/sr.git}.
+
+The filter accepts the following options:
+
+@table @option
+@item model
+Specify which super-resolution model to use. This option accepts the following values:
+
+@table @samp
+@item srcnn
+Super-Resolution Convolutional Neural Network model.
+See @url{https://arxiv.org/abs/1501.00092}.
+
+@item espcn
+Efficient Sub-Pixel Convolutional Neural Network model.
+See @url{https://arxiv.org/abs/1609.05158}.
+
+@end table
+
+Default value is @samp{srcnn}.
+
+@item dnn_backend
+Specify which DNN backend to use for model loading and execution. This option accepts
+the following values:
+
+@table @samp
+@item native
+Native implementation of DNN loading and execution.
+
+@item tensorflow
+TensorFlow backend. To enable this backend you
+need to install the TensorFlow for C library (see
+@url{https://www.tensorflow.org/install/install_c}) and configure FFmpeg with
+@code{--enable-libtensorflow}
+
+@end table
+
+Default value is @samp{native}.
+
+@item scale_factor
+Set scale factor for SRCNN model, for which custom model file was provided.
+Allowed values are @code{2}, @code{3} and @code{4}. Default value is @code{2}.
+Scale factor is necessary for SRCNN model, because it accepts input upscaled
+using bicubic upscaling with proper scale factor.
+
+@item model_filename
+Set path to model file specifying network architecture and its parameters.
+Note that different backends use different file formats. TensorFlow backend
+can load files for both formats, while native backend can load files for only
+its format.
+
+@end table
+
 @anchor{subtitles}
 @section subtitles
 
@@ -17168,7 +17277,7 @@ separatefields,select=eq(mod(n,4),0)+eq(mod(n,4),3),weave
 @section xbr
 Apply the xBR high-quality magnification filter which is designed for pixel
 art. It follows a set of edge-detection rules, see
-@url{http://www.libretro.com/forums/viewtopic.php?f=6&t=134}.
+@url{https://forums.libretro.com/t/xbr-algorithm-tutorial/123}.
 
 It accepts the following option:
 

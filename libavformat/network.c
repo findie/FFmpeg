@@ -194,8 +194,11 @@ int ff_socket(int af, int type, int proto)
 #endif
     }
 #ifdef SO_NOSIGPIPE
-    if (fd != -1)
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &(int){1}, sizeof(int));
+    if (fd != -1) {
+        if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &(int){1}, sizeof(int))) {
+             av_log(NULL, AV_LOG_WARNING, "setsockopt(SO_NOSIGPIPE) failed\n");
+        }
+    }
 #endif
     return fd;
 }
@@ -345,4 +348,11 @@ int ff_http_match_no_proxy(const char *no_proxy, const char *hostname)
     }
     av_free(buf);
     return ret;
+}
+
+void ff_log_net_error(void *ctx, int level, const char* prefix)
+{
+    char errbuf[100];
+    av_strerror(ff_neterrno(), errbuf, sizeof(errbuf));
+    av_log(ctx, level, "%s: %s\n", prefix, errbuf);
 }

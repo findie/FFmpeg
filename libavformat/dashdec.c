@@ -143,9 +143,6 @@ typedef struct DASHContext {
 
     int is_live;
     AVIOInterruptCB *interrupt_callback;
-    char *user_agent;                    ///< holds HTTP user agent set as an AVOption to the HTTP protocol context
-    char *cookies;                       ///< holds HTTP cookie values set in either the initial response or as an AVOption to the HTTP protocol context
-    char *headers;                       ///< holds HTTP headers set as an AVOption to the HTTP protocol context
     char *allowed_extensions;
     AVDictionary *avio_opts;
     int max_url_size;
@@ -262,6 +259,12 @@ static int64_t get_segment_start_time_based_on_timeline(struct representation *p
                 goto finish;
 
             start_time += pls->timelines[i]->duration;
+
+            if (pls->timelines[i]->repeat == -1) {
+                start_time = pls->timelines[i]->duration * cur_seq_no;
+                goto finish;
+            }
+
             for (j = 0; j < pls->timelines[i]->repeat; j++) {
                 num++;
                 if (num == cur_seq_no)
@@ -377,24 +380,6 @@ static void free_audio_list(DASHContext *c)
     c->n_audios = 0;
 }
 
-static void set_httpheader_options(DASHContext *c, AVDictionary **opts)
-{
-    // broker prior HTTP options that should be consistent across requests
-    av_dict_set(opts, "user_agent", c->user_agent, 0);
-    av_dict_set(opts, "cookies", c->cookies, 0);
-    av_dict_set(opts, "headers", c->headers, 0);
-    if (c->is_live) {
-        av_dict_set(opts, "seekable", "0", 0);
-    }
-}
-static void update_options(char **dest, const char *name, void *src)
-{
-    av_freep(dest);
-    av_opt_get(src, name, AV_OPT_SEARCH_CHILDREN, (uint8_t**)dest);
-    if (*dest)
-        av_freep(dest);
-}
-
 static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
                     AVDictionary *opts, AVDictionary *opts2, int *is_http)
 {
@@ -448,11 +433,9 @@ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
             av_opt_get(*pb, "cookies", AV_OPT_SEARCH_CHILDREN, (uint8_t**)&new_cookies);
 
         if (new_cookies) {
-            av_free(c->cookies);
-            c->cookies = new_cookies;
+            av_dict_set(&opts, "cookies", new_cookies, AV_DICT_DONT_STRDUP_VAL);
         }
 
-        av_dict_set(&opts, "cookies", c->cookies, 0);
     }
 
     av_dict_free(&tmp);
@@ -754,9 +737,12 @@ static int resolve_content_path(AVFormatContext *s, const char *url, int *max_ur
         if (!(node = baseurl_nodes[rootId])) {
             continue;
         }
-        if (ishttp(xmlNodeGetContent(node))) {
+        text = xmlNodeGetContent(node);
+        if (ishttp(text)) {
+            xmlFree(text);
             break;
         }
+        xmlFree(text);
     }
 
     node = baseurl_nodes[rootId];
@@ -871,7 +857,9 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
         baseurl_nodes[3] = representation_baseurl_node;
 
         ret = resolve_content_path(s, url, &c->max_url_size, baseurl_nodes, 4);
-        c->max_url_size = aligned(c->max_url_size  + strlen(rep_id_val) + strlen(rep_bandwidth_val));
+        c->max_url_size = aligned(c->max_url_size
+                                  + (rep_id_val ? strlen(rep_id_val) : 0)
+                                  + (rep_bandwidth_val ? strlen(rep_bandwidth_val) : 0));
         if (ret == AVERROR(ENOMEM) || ret == 0) {
             goto end;
         }
@@ -1139,7 +1127,7 @@ static int parse_manifest(AVFormatContext *s, const char *url, AVIOContext *in)
     if (!in) {
         close_in = 1;
 
-        set_httpheader_options(c, &opts);
+        av_dict_copy(&opts, c->avio_opts, 0);
         ret = avio_open2(&in, url, AVIO_FLAG_READ, c->interrupt_callback, &opts);
         av_dict_free(&opts);
         if (ret < 0)
@@ -1342,7 +1330,12 @@ static int64_t calc_max_seg_no(struct representation *pls, DASHContext *c)
         int i = 0;
         num = pls->first_seq_no + pls->n_timelines - 1;
         for (i = 0; i < pls->n_timelines; i++) {
-            num += pls->timelines[i]->repeat;
+            if (pls->timelines[i]->repeat == -1) {
+                int length_of_each_segment = pls->timelines[i]->duration / pls->fragment_timescale;
+                num =  c->period_duration / length_of_each_segment;
+            } else {
+                num += pls->timelines[i]->repeat;
+            }
         }
     } else if (c->is_live && pls->fragment_duration) {
         num = pls->first_seq_no + (((get_current_time_in_sec() - c->availability_start_time)) * pls->fragment_timescale)  / pls->fragment_duration;
@@ -1584,7 +1577,7 @@ static int open_input(DASHContext *c, struct representation *pls, struct fragmen
     if (!url) {
         goto cleanup;
     }
-    set_httpheader_options(c, &opts);
+
     if (seg->size >= 0) {
         /* try to restrict the HTTP request to the part we want
          * (if this is in fact a HTTP request) */
@@ -1731,7 +1724,7 @@ end:
 static int save_avio_options(AVFormatContext *s)
 {
     DASHContext *c = s->priv_data;
-    const char *opts[] = { "headers", "user_agent", "user_agent", "cookies", NULL }, **opt = opts;
+    const char *opts[] = { "headers", "user_agent", "cookies", NULL }, **opt = opts;
     uint8_t *buf = NULL;
     int ret = 0;
 
@@ -1899,7 +1892,6 @@ static int is_common_init_section_exist(struct representation **pls, int n_pls)
 
 static void copy_init_section(struct representation *rep_dest, struct representation *rep_src)
 {
-    *rep_dest->init_section = *rep_src->init_section;
     rep_dest->init_sec_buf = av_mallocz(rep_src->init_sec_buf_size);
     memcpy(rep_dest->init_sec_buf, rep_src->init_sec_buf, rep_src->init_sec_data_len);
     rep_dest->init_sec_buf_size = rep_src->init_sec_buf_size;
@@ -1910,24 +1902,19 @@ static void copy_init_section(struct representation *rep_dest, struct representa
 
 static int dash_read_header(AVFormatContext *s)
 {
-    void *u = (s->flags & AVFMT_FLAG_CUSTOM_IO) ? NULL : s->pb;
     DASHContext *c = s->priv_data;
     int ret = 0;
     int stream_index = 0;
     int i;
 
     c->interrupt_callback = &s->interrupt_callback;
-    // if the URL context is good, read important options we must broker later
-    if (u) {
-        update_options(&c->user_agent, "user_agent", u);
-        update_options(&c->cookies, "cookies", u);
-        update_options(&c->headers, "headers", u);
-    }
-
-    if ((ret = parse_manifest(s, s->url, s->pb)) < 0)
-        goto fail;
 
     if ((ret = save_avio_options(s)) < 0)
+        goto fail;
+
+    av_dict_set(&c->avio_opts, "seekable", "0", 0);
+
+    if ((ret = parse_manifest(s, s->url, s->pb)) < 0)
         goto fail;
 
     /* If this isn't a live stream, fill the total duration of the
@@ -1936,7 +1923,8 @@ static int dash_read_header(AVFormatContext *s)
         s->duration = (int64_t) c->media_presentation_duration * AV_TIME_BASE;
     }
 
-    c->is_init_section_common_video = is_common_init_section_exist(c->videos, c->n_videos);
+    if(c->n_videos)
+        c->is_init_section_common_video = is_common_init_section_exist(c->videos, c->n_videos);
 
     /* Open the demuxer for video and audio components if available */
     for (i = 0; i < c->n_videos; i++) {
@@ -1952,7 +1940,8 @@ static int dash_read_header(AVFormatContext *s)
         ++stream_index;
     }
 
-  c->is_init_section_common_audio = is_common_init_section_exist(c->audios, c->n_audios);
+    if(c->n_audios)
+        c->is_init_section_common_audio = is_common_init_section_exist(c->audios, c->n_audios);
 
     for (i = 0; i < c->n_audios; i++) {
         struct representation *cur_audio = c->audios[i];
@@ -2091,8 +2080,6 @@ static int dash_close(AVFormatContext *s)
     free_audio_list(c);
     free_video_list(c);
 
-    av_freep(&c->cookies);
-    av_freep(&c->user_agent);
     av_dict_free(&c->avio_opts);
     av_freep(&c->base_url);
     return 0;

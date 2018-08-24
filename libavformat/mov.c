@@ -1902,6 +1902,8 @@ static int mov_read_glbl(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     ret = ff_get_extradata(c->fc, st->codecpar, pb, atom.size);
     if (ret < 0)
         return ret;
+    if (atom.type == MKTAG('h','v','c','C') && st->codecpar->codec_tag == MKTAG('d','v','h','1'))
+        st->codecpar->codec_id = AV_CODEC_ID_HEVC;
 
     return 0;
 }
@@ -3684,9 +3686,9 @@ static void mov_fix_index(MOVContext *mov, AVStream *st)
                 st->index_entries[i].timestamp -= msc->min_corrected_pts;
             }
         }
-        // Start time should be equal to zero or the duration of any empty edits.
-        st->start_time = empty_edits_sum_duration;
     }
+    // Start time should be equal to zero or the duration of any empty edits.
+    st->start_time = empty_edits_sum_duration;
 
     // Update av stream length, if it ends up shorter than the track's media duration
     st->duration = FFMIN(st->duration, edit_list_dts_entry_end - start_dts);
@@ -5185,6 +5187,34 @@ static int mov_read_tmcd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return 0;
 }
 
+static int mov_read_av1c(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+{
+    AVStream *st;
+    int ret;
+
+    if (c->fc->nb_streams < 1)
+        return 0;
+    st = c->fc->streams[c->fc->nb_streams - 1];
+
+    if (atom.size < 4) {
+        av_log(c->fc, AV_LOG_ERROR, "Empty AV1 Codec Configuration Box\n");
+        return AVERROR_INVALIDDATA;
+    }
+
+    /* For now, propagate only the OBUs, if any. Once libavcodec is
+       updated to handle isobmff style extradata this can be removed. */
+    avio_skip(pb, 4);
+
+    if (atom.size == 4)
+        return 0;
+
+    ret = ff_get_extradata(c->fc, st->codecpar, pb, atom.size - 4);
+    if (ret < 0)
+        return ret;
+
+    return 0;
+}
+
 static int mov_read_vpcc(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
     AVStream *st;
@@ -5815,6 +5845,9 @@ static int get_current_encryption_info(MOVContext *c, MOVEncryptionIndex **encry
         *sc = st->priv_data;
 
         if (!frag_stream_info->encryption_index) {
+            // If this stream isn't encrypted, don't create the index.
+            if (!(*sc)->cenc.default_encrypted_sample)
+                return 0;
             frag_stream_info->encryption_index = av_mallocz(sizeof(*frag_stream_info->encryption_index));
             if (!frag_stream_info->encryption_index)
                 return AVERROR(ENOMEM);
@@ -5830,6 +5863,9 @@ static int get_current_encryption_info(MOVContext *c, MOVEncryptionIndex **encry
         *sc = st->priv_data;
 
         if (!(*sc)->cenc.encryption_index) {
+            // If this stream isn't encrypted, don't create the index.
+            if (!(*sc)->cenc.default_encrypted_sample)
+                return 0;
             (*sc)->cenc.encryption_index = av_mallocz(sizeof(*frag_stream_info->encryption_index));
             if (!(*sc)->cenc.encryption_index)
                 return AVERROR(ENOMEM);
@@ -5845,6 +5881,11 @@ static int mov_read_sample_encryption_info(MOVContext *c, AVIOContext *pb, MOVSt
     int i;
     unsigned int subsample_count;
     AVSubsampleEncryptionInfo *subsamples;
+
+    if (!sc->cenc.default_encrypted_sample) {
+        av_log(c->fc, AV_LOG_ERROR, "Missing schm or tenc\n");
+        return AVERROR_INVALIDDATA;
+    }
 
     *sample = av_encryption_info_clone(sc->cenc.default_encrypted_sample);
     if (!*sample)
@@ -6573,7 +6614,7 @@ static int mov_read_dops(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     const int OPUS_SEEK_PREROLL_MS = 80;
     AVStream *st;
     size_t size;
-    int16_t pre_skip;
+    uint16_t pre_skip;
 
     if (c->fc->nb_streams < 1)
         return 0;
@@ -6622,6 +6663,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('A','A','L','P'), mov_read_avid },
 { MKTAG('A','R','E','S'), mov_read_ares },
 { MKTAG('a','v','s','s'), mov_read_avss },
+{ MKTAG('a','v','1','C'), mov_read_av1c },
 { MKTAG('c','h','p','l'), mov_read_chpl },
 { MKTAG('c','o','6','4'), mov_read_stco },
 { MKTAG('c','o','l','r'), mov_read_colr },
