@@ -2034,6 +2034,8 @@ static int mov_codec_id(AVStream *st, uint32_t format)
             id = ff_codec_get_id(ff_codec_movsubtitle_tags, format);
             if (id > 0)
                 st->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
+            else
+                id = ff_codec_get_id(ff_codec_movdata_tags, format);
         }
     }
 
@@ -2120,8 +2122,8 @@ static void mov_parse_stsd_audio(MOVContext *c, AVIOContext *pb,
     // Read QT version 1 fields. In version 0 these do not exist.
     av_log(c->fc, AV_LOG_TRACE, "version =%d, isom =%d\n", version, c->isom);
     if (!c->isom ||
-        (compatible_brands && strstr(compatible_brands->value, "qt  "))) {
-
+        (compatible_brands && strstr(compatible_brands->value, "qt  ")) ||
+        (sc->stsd_version == 0 && version > 0)) {
         if (version == 1) {
             sc->samples_per_frame = avio_rb32(pb);
             avio_rb32(pb); /* bytes per packet */
@@ -2492,18 +2494,16 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
                "size=%"PRId64" 4CC=%s codec_type=%d\n", size,
                av_fourcc2str(format), st->codecpar->codec_type);
 
+        st->codecpar->codec_id = id;
         if (st->codecpar->codec_type==AVMEDIA_TYPE_VIDEO) {
-            st->codecpar->codec_id = id;
             mov_parse_stsd_video(c, pb, st, sc);
         } else if (st->codecpar->codec_type==AVMEDIA_TYPE_AUDIO) {
-            st->codecpar->codec_id = id;
             mov_parse_stsd_audio(c, pb, st, sc);
             if (st->codecpar->sample_rate < 0) {
                 av_log(c->fc, AV_LOG_ERROR, "Invalid sample rate %d\n", st->codecpar->sample_rate);
                 return AVERROR_INVALIDDATA;
             }
         } else if (st->codecpar->codec_type==AVMEDIA_TYPE_SUBTITLE){
-            st->codecpar->codec_id = id;
             mov_parse_stsd_subtitle(c, pb, st, sc,
                                     size - (avio_tell(pb) - start_pos));
         } else {
@@ -2554,11 +2554,12 @@ static int mov_read_stsd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     st = c->fc->streams[c->fc->nb_streams - 1];
     sc = st->priv_data;
 
-    avio_r8(pb); /* version */
+    sc->stsd_version = avio_r8(pb);
     avio_rb24(pb); /* flags */
     entries = avio_rb32(pb);
 
-    if (entries <= 0) {
+    /* Each entry contains a size (4 bytes) and format (4 bytes). */
+    if (entries <= 0 || entries > atom.size / 8) {
         av_log(c->fc, AV_LOG_ERROR, "invalid STSD entries %d\n", entries);
         return AVERROR_INVALIDDATA;
     }
