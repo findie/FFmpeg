@@ -29,6 +29,7 @@
 #include "formats.h"
 #include "internal.h"
 #include "video.h"
+#include <stdatomic.h>
 
 #define ABSDIFF(a,b) (abs((int)(a)-(int)(b)))
 
@@ -37,7 +38,8 @@ typedef struct ThreadData {
     uint8_t* previous;
     uint8_t* show_frame;
 
-    int pixels_changed, width, height, stride;
+    int width, height, stride;
+    atomic_uint atomic_pixels_changed;
 } ThreadData;
 
 typedef struct FrameChangeContext {
@@ -126,9 +128,10 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 
     int x, y;
 
+    double pixels_changed_on_slice = 0;
+
     // fixme split functions based on count_mode
     if(count_mode == COUNT_MODE_ABSOLUTE) {
-        int pixels_changed_on_slice = 0;
 
         for (y = slice_start; y < slice_end; y++) {
             for (x = 0; x < width; x++) {
@@ -147,10 +150,8 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             ptr_a += stride;
             ptr_b += stride;
         }
-        td->pixels_changed += pixels_changed_on_slice;
 
     }else if(count_mode == COUNT_MODE_PERCENTAGE) {
-        double pixels_changed_on_slice = 0;
 
         for (y = slice_start; y < slice_end; y++) {
             for (x = 0; x < width; x++) {
@@ -169,8 +170,9 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             ptr_a += stride;
             ptr_b += stride;
         }
-        td->pixels_changed += pixels_changed_on_slice;
     }
+
+    atomic_fetch_add_explicit(&td->atomic_pixels_changed, pixels_changed_on_slice, memory_order_relaxed);
 
     return 0;
 }
@@ -202,13 +204,13 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         td.height = in->height;
         td.stride = in->linesize[0];
 
-        td.pixels_changed = 0;
+        td.atomic_pixels_changed = 0;
         ctx->internal->execute(ctx, filter_slice, &td, NULL, FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
         emms_c();
 
         av_log(framechange, AV_LOG_INFO, "frame: %d change: %f\n",
                frame_nr,
-               td.pixels_changed / (double)(td.width * td.height)
+               td.atomic_pixels_changed / (double)(td.width * td.height)
         );
 
     }
