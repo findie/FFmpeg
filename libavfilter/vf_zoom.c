@@ -38,11 +38,15 @@
 static const char *const var_names[] = {
         "z", "zoom",/// -> last zoom
         "t",        /// -> time stamp
+        "x",        /// -> last x
+        "y",        /// -> last y
         NULL
 };
 enum var_name {
     VAR_Z, VAR_ZOOM,
     VAR_T,
+    VAR_X,
+    VAR_Y,
     VAR_VARS_NB
 };
 
@@ -54,11 +58,17 @@ typedef struct ZoomContext {
 
 
     double          zoom;
+    double          x;
+    double          y;
     int             interpolation;
     FFDrawColor     fillcolor;
 
     char*           zoom_expr_str;
     AVExpr*         zoom_expr;
+    char*           x_expr_str;
+    AVExpr*         x_expr;
+    char*           y_expr_str;
+    AVExpr*         y_expr;
 
     int     nb_planes;
     int     nb_components;
@@ -84,8 +94,10 @@ enum {
 #define OFFSET(x) offsetof(ZoomContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 static const AVOption zoom_options[] = {
-    { "zoom",               "set zoom offset expression",           OFFSET(zoom_expr_str),  AV_OPT_TYPE_STRING, {.str="1"},        CHAR_MIN, CHAR_MAX, FLAGS },
-    { "z",                  "set zoom offset expression",           OFFSET(zoom_expr_str),  AV_OPT_TYPE_STRING, {.str="1"},        CHAR_MIN, CHAR_MAX, FLAGS },
+    { "zoom",               "set zoom offset expression",           OFFSET(zoom_expr_str),  AV_OPT_TYPE_STRING, {.str="1"},          CHAR_MIN, CHAR_MAX, FLAGS },
+    { "z",                  "set zoom offset expression",           OFFSET(zoom_expr_str),  AV_OPT_TYPE_STRING, {.str="1"},          CHAR_MIN, CHAR_MAX, FLAGS },
+    { "x",                  "set x offset expression",              OFFSET(x_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
+    { "y",                  "set y offset expression",              OFFSET(y_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
     { "fillcolor",          "set color for background",             OFFSET(fillcolor.rgba), AV_OPT_TYPE_COLOR,  {.str="black@0"},  CHAR_MIN, CHAR_MAX, FLAGS },
 
     { "interpolation",      "enable interpolation when scaling",    OFFSET(interpolation),  AV_OPT_TYPE_INT,    {.i64=FAST_BILINEAR}, SWS_FAST_BILINEAR,   SPLINE, FLAGS, "interpolation"},
@@ -108,7 +120,6 @@ AVFILTER_DEFINE_CLASS(zoom);
 
 static av_cold int init(AVFilterContext *ctx)
 {
-//    ZoomContext *zoom = ctx->priv;
     return 0;
 }
 
@@ -131,21 +142,25 @@ static int config_props(AVFilterLink *inlink)
 
     zoom->var_values[VAR_Z] = 1;
     zoom->var_values[VAR_ZOOM] = 1;
+    zoom->var_values[VAR_X] = 0.5;
+    zoom->var_values[VAR_Y] = 0.5;
     zoom->var_values[VAR_T] = NAN;
 
     int ret;
     if(
             (ret = av_expr_parse(&zoom->zoom_expr, zoom->zoom_expr_str, var_names,
+                                 NULL, NULL, NULL, NULL, 0, ctx)) < 0 ||
+            (ret = av_expr_parse(&zoom->x_expr, zoom->x_expr_str, var_names,
+                                 NULL, NULL, NULL, NULL, 0, ctx)) < 0 ||
+            (ret = av_expr_parse(&zoom->y_expr, zoom->y_expr_str, var_names,
                                  NULL, NULL, NULL, NULL, 0, ctx)) < 0
-      )
+        )
         return AVERROR(EINVAL);
 
     return 0;
 }
 static int config_output(AVFilterLink *outlink)
 {
-//    AVFilterContext *ctx = outlink->src;
-//    ZoomContext *zoom = ctx->priv;
     return 0;
 }
 
@@ -178,13 +193,16 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
 
     const double zoom_val = zoom->zoom;
 
-    const int in_w = in->width;
-    const int in_h = in->height;
-    const int in_f = in->format;
+    const int in_w  = in->width;
+    const int in_h  = in->height;
+    const int in_f  = in->format;
 
           int out_w = out->width * zoom_val;
           int out_h = out->height * zoom_val;
     const int out_f = outlink->format;
+
+    const double x  = zoom->x;
+    const double y  = zoom->y;
 
     if(out_w % 2 == 1) out_w--;
     if(out_h % 2 == 1) out_h--;
@@ -213,8 +231,8 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     sws_freeContext(zoom->sws);
     zoom->sws = NULL;
 
-    const int dx = (in_w - out_w) / 2;
-    const int dy = (in_h - out_h) / 2;
+    const int dx = av_clip_c(in_w * x - out_w/2, 0, in_w - out_w);
+    const int dy = av_clip_c(in_h * y - out_h/2, 0, in_h - out_h);
 
     ff_copy_rectangle2(&zoom->dc,
                        out->data, out->linesize,
@@ -241,13 +259,16 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
 
     const double zoom_val = zoom->zoom;
 
-          int in_w = in->width / zoom_val;
-          int in_h = in->height / zoom_val;
-    const int in_f = in->format;
+          int in_w  = in->width / zoom_val;
+          int in_h  = in->height / zoom_val;
+    const int in_f  = in->format;
 
     const int out_w = out->width;
     const int out_h = out->height;
     const int out_f = outlink->format;
+
+    const double x  = zoom->x;
+    const double y  = zoom->y;
 
     if(in_w % 2 == 1) in_w--;
     if(in_h % 2 == 1) in_h--;
@@ -255,8 +276,9 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     if(out_h <= 0 || out_w <= 0)
         goto bypass;
 
-    const int dx = -(in_w - out_w) / 2;
-    const int dy = -(in_h - out_h) / 2;
+    const int dx = av_clip_c(out_w * x - in_w/2, 0, out_w - in_w);
+    const int dy = av_clip_c(out_h * y - in_h/2, 0, out_h - in_h);
+
 
     int px[4], py[4];
     uint8_t *input[4];
@@ -328,7 +350,18 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     // eval Z (zoom)
     zoom_val = zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = av_expr_eval(zoom->zoom_expr, zoom->var_values, NULL);
 
+    // eval x/y
+    zoom->x = zoom->var_values[VAR_X] = av_expr_eval(zoom->x_expr, zoom->var_values, NULL);
+    zoom->y = zoom->var_values[VAR_Y] = av_expr_eval(zoom->y_expr, zoom->var_values, NULL);
 
+    if(zoom->x < 0 || zoom->x > 1){
+        av_log(zoom, AV_LOG_WARNING, "x position %.2f is out of range of [0-1]\n", zoom->x);
+        zoom->x = av_clipd_c(zoom->x, 0, 1);
+    }
+		if(zoom->y < 0 || zoom->y > 1){
+				av_log(zoom, AV_LOG_WARNING, "y position %.2f is out of range of [0-1]\n", zoom->y);
+        zoom->y = av_clipd_c(zoom->y, 0, 1);
+		}
     // copy in the background
     ff_fill_rectangle(&zoom->dc, &zoom->fillcolor,
                       out->data, out->linesize,
@@ -371,6 +404,8 @@ static av_cold void uninit(AVFilterContext *ctx)
 {
     ZoomContext *zoom = ctx->priv;
     av_expr_free(zoom->zoom_expr);
+    av_expr_free(zoom->x_expr);
+    av_expr_free(zoom->y_expr);
 
     zoom->zoom_expr = NULL;
 }
