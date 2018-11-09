@@ -78,23 +78,20 @@ static av_cold int xavs2_init(AVCodecContext *avctx)
         return AVERROR(ENOMEM);
     }
 
-    xavs2_opt_set2("rec",   "%d", 0);
+    xavs2_opt_set2("Width",     "%d", avctx->width);
+    xavs2_opt_set2("Height",    "%d", avctx->height);
+    xavs2_opt_set2("BFrames",   "%d", avctx->max_b_frames);
+    xavs2_opt_set2("BitDepth",  "%d", bit_depth);
+    xavs2_opt_set2("Log",       "%d", cae->log_level);
+    xavs2_opt_set2("Preset",    "%d", cae->preset_level);
 
-    xavs2_opt_set2("width",     "%d", avctx->width);
-    xavs2_opt_set2("height",    "%d", avctx->height);
-    xavs2_opt_set2("bframes",   "%d", avctx->max_b_frames);
-    xavs2_opt_set2("bitdepth",  "%d", bit_depth);
-    xavs2_opt_set2("log",       "%d", cae->log_level);
-    xavs2_opt_set2("preset",    "%d", cae->preset_level);
+    xavs2_opt_set2("IntraPeriodMax",    "%d", avctx->gop_size);
+    xavs2_opt_set2("IntraPeriodMin",    "%d", avctx->gop_size);
 
-    /* not the same parameter as the IntraPeriod in xavs2 log */
-    xavs2_opt_set2("intraperiod",       "%d", avctx->gop_size);
+    xavs2_opt_set2("ThreadFrames",      "%d", avctx->thread_count);
+    xavs2_opt_set2("ThreadRows",        "%d", cae->lcu_row_threads);
 
-    xavs2_opt_set2("thread_frames",     "%d", avctx->thread_count);
-    xavs2_opt_set2("thread_rows",       "%d", cae->lcu_row_threads);
-    xavs2_opt_set2("hierarchical_ref",  "%d", cae->hierarchical_reference);
-
-    xavs2_opt_set2("OpenGOP",  "%d", 1);
+    xavs2_opt_set2("OpenGOP",  "%d", !(avctx->flags & AV_CODEC_FLAG_CLOSED_GOP));
 
     if (cae->xavs2_opts) {
         AVDictionary *dict    = NULL;
@@ -112,11 +109,11 @@ static av_cold int xavs2_init(AVCodecContext *avctx)
     if (avctx->bit_rate > 0) {
         xavs2_opt_set2("RateControl",   "%d", 1);
         xavs2_opt_set2("TargetBitRate", "%"PRId64"", avctx->bit_rate);
-        xavs2_opt_set2("initial_qp",    "%d", cae->initial_qp);
-        xavs2_opt_set2("max_qp",        "%d", cae->max_qp);
-        xavs2_opt_set2("min_qp",        "%d", cae->min_qp);
+        xavs2_opt_set2("InitialQP",     "%d", cae->initial_qp);
+        xavs2_opt_set2("MaxQP",         "%d", cae->max_qp);
+        xavs2_opt_set2("MinQP",         "%d", cae->min_qp);
     } else {
-        xavs2_opt_set2("initial_qp",    "%d", cae->qp);
+        xavs2_opt_set2("InitialQP",     "%d", cae->qp);
     }
 
 
@@ -261,7 +258,6 @@ static const AVOption options[] = {
     { "min_qp"          ,   "min qp for rate control" ,                 OFFSET(min_qp)          , AV_OPT_TYPE_INT, {.i64 = 20 },  0,      63,  VE },
     { "speed_level"     ,   "Speed level, higher is better but slower", OFFSET(preset_level)    , AV_OPT_TYPE_INT, {.i64 =  0 },  0,       9,  VE },
     { "log_level"       ,   "log level: -1: none, 0: error, 1: warning, 2: info, 3: debug", OFFSET(log_level)    , AV_OPT_TYPE_INT, {.i64 =  0 },  -1,       3,  VE },
-    { "hierarchical_ref",   "hierarchical reference" ,                  OFFSET(hierarchical_reference)    , AV_OPT_TYPE_BOOL,    {.i64 =  1 }, 0, 1,  VE },
     { "xavs2-params"    ,   "set the xavs2 configuration using a :-separated list of key=value parameters", OFFSET(xavs2_opts), AV_OPT_TYPE_STRING, { 0 }, 0, 0, VE },
     { NULL },
 };
@@ -290,7 +286,8 @@ AVCodec ff_libxavs2_encoder = {
     .encode2        = xavs2_encode_frame,
     .close          = xavs2_close,
     .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AUTO_THREADS,
-    .pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P10, AV_PIX_FMT_NONE },
+    .pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P,
+                                                     AV_PIX_FMT_NONE },
     .priv_class     = &libxavs2,
     .defaults       = xavs2_defaults,
     .wrapper_name   = "libxavs2",

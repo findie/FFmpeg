@@ -22,13 +22,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/avassert.h"
-#include "libavutil/common.h"
-#include "libavutil/avutil.h"
 #include "avcodec.h"
-#include "libavutil/imgutils.h"
-#include "internal.h"
-
 #include "davs2.h"
 
 typedef struct DAVS2Context {
@@ -56,7 +50,7 @@ static av_cold int davs2_init(AVCodecContext *avctx)
 
     if (!cad->decoder) {
         av_log(avctx, AV_LOG_ERROR, "decoder created error.");
-        return AVERROR(EINVAL);
+        return AVERROR_EXTERNAL;
     }
 
     av_log(avctx, AV_LOG_VERBOSE, "decoder created. %p\n", cad->decoder);
@@ -90,7 +84,7 @@ static int davs2_dump_frames(AVCodecContext *avctx, davs2_picture_t *pic,
 
         if (!frame->buf[plane]){
             av_log(avctx, AV_LOG_ERROR, "dump error: alloc failed.\n");
-            return AVERROR(EINVAL);
+            return AVERROR(ENOMEM);
         }
 
         frame->data[plane]     = frame->buf[plane]->data;
@@ -148,7 +142,7 @@ static int davs2_decode_frame(AVCodecContext *avctx, void *data,
 
     if (ret == DAVS2_ERROR) {
         av_log(avctx, AV_LOG_ERROR, "Decoder error: can't read packet\n");
-        return AVERROR(EINVAL);
+        return AVERROR_EXTERNAL;
     }
 
     ret = davs2_decoder_recv_frame(cad->decoder, &cad->headerset, &cad->out_frame);
@@ -171,7 +165,7 @@ AVCodec ff_libdavs2_decoder = {
     .close          = davs2_end,
     .decode         = davs2_decode_frame,
     .capabilities   =  AV_CODEC_CAP_DELAY,//AV_CODEC_CAP_DR1 |
-    .pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P10,
+    .pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P,
                                                      AV_PIX_FMT_NONE },
     .wrapper_name   = "libdavs2",
 };
