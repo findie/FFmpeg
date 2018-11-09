@@ -108,4 +108,15 @@ You can install libvidstab from:
 
 ### Debugging
 #### *db (lldb/gdb)
-Add `--disable-stripping --disable-optimizations --enable-debug=3` to configure step
+Add ` --disable-stripping --disable-optimizations --enable-debug=1 --enable-shared --disable-static --disable-optimizations --disable-mmx --disable-stripping --enable-debug` to configure step
+
+### CUDA support
+
+- Install CUDA headers form [here](http://git.videolan.org/?p=ffmpeg/nv-codec-headers.git)
+- Add to config
+```
+--enable-cuda --enable-cuvid --enable-nvenc --enable-cuda-sdk --enable-libnpp \
+--extra-cflags='-fPIC -I/usr/local/cuda/include' \
+--extra-ldflags=-L/usr/local/cuda/lib64
+```
+
