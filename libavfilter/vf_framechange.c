@@ -39,7 +39,7 @@ typedef struct ThreadData {
     uint8_t* show_frame;
 
     int width, height, stride;
-    atomic_uint atomic_pixels_changed;
+    atomic_uint_least64_t atomic_pixels_changed;
 } ThreadData;
 
 typedef struct FrameChangeContext {
@@ -128,7 +128,7 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 
     int x, y;
 
-    double pixels_changed_on_slice = 0;
+    uint64_t pixels_changed_on_slice = 0;
 
     // fixme split functions based on count_mode
     if(count_mode == COUNT_MODE_ABSOLUTE) {
@@ -139,7 +139,7 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
                 int changed = (change > threshold);
 
                 if(changed) {
-                    pixels_changed_on_slice++;
+                    pixels_changed_on_slice += 255;
                 }
 
                 if(show) {
@@ -159,7 +159,7 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
                 int changed = (change > threshold);
 
                 if(changed) {
-                    pixels_changed_on_slice += changed / 255.0;
+                    pixels_changed_on_slice += change;
                 }
 
                 if(show) {
@@ -210,7 +210,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 
         av_log(framechange, AV_LOG_INFO, "frame: %d change: %f\n",
                frame_nr,
-               td.atomic_pixels_changed / (double)(td.width * td.height)
+               td.atomic_pixels_changed / 255.0 / (td.width * td.height)
         );
 
     }
