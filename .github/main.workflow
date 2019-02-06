@@ -1,4 +1,4 @@
-workflow "New workflow" {
+workflow "Publish 2 Docker" {
   on = "push"
   resolves = ["publish"]
 }
