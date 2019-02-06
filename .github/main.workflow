@@ -18,8 +18,7 @@ action "Login 2 DockerHub" {
 }
 
 action "publish" {
-  uses = "actions/action-builder/docker@master"
+  uses = "actions/docker/cli@master"
   needs = ["Login 2 DockerHub"]
-  runs = "make"
-  args = "publish"
+  args = "push findie/ffmpeg"
 }
