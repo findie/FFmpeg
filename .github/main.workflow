@@ -11,8 +11,8 @@ action "Build" {
 action "Login 2 DockerHub" {
   uses = "actions/docker/login@master"
   secrets = [
-    "DOCKER_PASSWORD",
     "DOCKER_USERNAME",
+    "DOCKER_PASSWORD",
   ]
   needs = ["Build"]
 }
