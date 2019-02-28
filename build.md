@@ -59,7 +59,7 @@ _For Windows please follow guide [here](https://trac.ffmpeg.org/wiki/Compilation
 ```bash
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
-./configure --enable-pthreads --enable-avresample \
+./configure --enable-pthreads --enable-avresample --enable-openssl \
     --enable-gpl --enable-version3 --enable-nonfree \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfdk-aac --enable-libfreetype \
@@ -76,7 +76,7 @@ make install && \
 ```bash
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
-./configure --enable-pthreads --enable-avresample \
+./configure --enable-pthreads --enable-avresample --enable-openssl \
     --enable-gpl --enable-version3 --enable-nonfree \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfdk-aac --enable-libfreetype \
