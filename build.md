@@ -46,7 +46,7 @@ apt -y install \
     texinfo wget zlib1g-dev fontconfig \
     libvpx-dev libx264-dev libx265-dev \
     libmp3lame-dev libopus-dev \
-    yasm nasm libxvidcore-dev libfribidi-dev libtheora-dev libfdk-aac-dev
+    yasm nasm libxvidcore-dev libfribidi-dev libtheora-dev libfdk-aac-dev libgnutls28-dev
     
 ```
 
@@ -76,7 +76,7 @@ make install && \
 ```bash
 git clone https://github.com/findie/FFmpeg.git ffmpeg && cd ffmpeg && \
 \
-./configure --enable-pthreads --enable-avresample --enable-openssl \
+./configure --enable-pthreads --enable-avresample --enable-gnutls \
     --enable-gpl --enable-version3 --enable-nonfree \
     --enable-libvpx --enable-libx264 --enable-libx265 \
     --enable-libass --enable-libfdk-aac --enable-libfreetype \
