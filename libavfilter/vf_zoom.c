@@ -539,7 +539,7 @@ static av_cold void uninit(AVFilterContext *ctx)
 
     zoom->zoom_expr = NULL;
     if (zoom->schedule != NULL)
-      av_freep(zoom->schedule);
+      av_free(zoom->schedule);
 }
 
 static const AVFilterPad zoom_inputs[] = {
