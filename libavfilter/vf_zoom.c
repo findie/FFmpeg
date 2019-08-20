@@ -241,8 +241,28 @@ static int config_output(AVFilterLink *outlink)
     const int in_w = outlink->src->inputs[0]->w;
     const int in_h = outlink->src->inputs[0]->h;
 
-    outlink->w = aspectRatio <= 1 ? aspectRatio * in_h : in_w;
-    outlink->h = aspectRatio <= 1 ? in_h : in_w / aspectRatio;
+    const double originalAspectRatio = 1.0 * in_w / in_h;
+
+    if(originalAspectRatio < aspectRatio){
+      outlink->w = in_w;
+      outlink->h = round(in_h * (originalAspectRatio / aspectRatio));
+    }else{
+      outlink->w = round(in_w * (aspectRatio / originalAspectRatio));
+      outlink->h = in_h;
+    }
+
+    if(outlink->w % 2 != 0){
+      outlink->w -= 1;
+    }
+    if(outlink->h % 2 != 0){
+      outlink->h -= 1;
+    }
+    if(outlink->w <= 0){
+      outlink->w = 2;
+    }
+    if(outlink->h <= 0){
+      outlink->h = 2;
+    }
     return 0;
 }
 
@@ -266,6 +286,8 @@ static AVFrame* alloc_frame(enum AVPixelFormat pixfmt, int w, int h)
 
 static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
 {
+    av_log(zoom, AV_LOG_DEBUG, "zoom out\n");
+
     int ret = 0;
     zoom->sws = sws_alloc_context();
     if (!zoom->sws) {
@@ -283,15 +305,12 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
           int out_h = in->height * zoom_val;
     const int out_f = outlink->format;
 
-    int adjusted_in_w = in_w;
-    int adjusted_in_h = in_h;
+    const int fout_w = out->width;
+    const int fout_h = out->height;
 
+
+    const double originalAspectRatio = 1.0 * in_w / in_h;
     const double aspectRatio = zoom->outAspectRatio;
-    if (aspectRatio <= 1) {
-      adjusted_in_w = aspectRatio * in_h;
-    }else{
-      adjusted_in_h = in_w / aspectRatio;
-    }
 
     const double x  = zoom->x;
     const double y  = zoom->y;
@@ -301,6 +320,8 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
 
     // todo there's surely a way to implement this without a temp frame
     AVFrame* temp_frame = alloc_frame(out_f, out_w, out_h);
+    av_log(zoom, AV_LOG_DEBUG, "zoom: %.6f y: %.3f\n", zoom->zoom);
+    av_log(zoom, AV_LOG_DEBUG, "scaling: %dx%d -> %dx%d\n", in_w, in_h, out_w, out_h);
 
     av_opt_set_int(zoom->sws, "srcw", in_w, 0);
     av_opt_set_int(zoom->sws, "srch", in_h, 0);
@@ -320,17 +341,18 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     sws_freeContext(zoom->sws);
     zoom->sws = NULL;
 
-    const int dx = av_clip_c(adjusted_in_w * x - out_w/2, 0, adjusted_in_w - out_w);
-    const int dy = av_clip_c(adjusted_in_h * y - out_h/2, 0, adjusted_in_h - out_h);
+    av_log(zoom, AV_LOG_DEBUG, "x: %.3f y: %.3f\n", x, y);
+    const int dx = FFMIN(FFMAX(fout_w * x - out_w/2, 0), FFMAX(fout_w - out_w, 0));
+    const int dy = FFMIN(FFMAX(fout_h * y - out_h/2, 0), FFMAX(fout_h - out_h, 0));
     av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
     av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
-    av_log(zoom, AV_LOG_DEBUG, "adjusted_in_w: %d adjusted_in_h: %d\n", adjusted_in_w,adjusted_in_h);
 
     ff_copy_rectangle2(&zoom->dc,
                        out->data, out->linesize,
                        temp_frame->data, temp_frame->linesize,
                        dx, dy, 0, 0,
-                       out_w, out_h);
+                       FFMIN(out_w, fout_w - dx),
+                       FFMIN(out_h, fout_h - dy));
 
     av_frame_free(&temp_frame);
 
@@ -342,6 +364,8 @@ bypass:
 
 static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
 {
+    av_log(zoom, AV_LOG_DEBUG, "zoom in\n");
+
     int ret = 0;
     zoom->sws = sws_alloc_context();
     if (!zoom->sws) {
@@ -355,11 +379,13 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
           int in_h  = in->height / zoom_val;
     const int in_f  = in->format;
 
+    const double originalAspectRatio = 1.0 * in_w / in_h;
     const double aspectRatio = zoom->outAspectRatio;
-    if (aspectRatio <= 1) {
-      in_w = aspectRatio * in_h;
+
+    if(originalAspectRatio < aspectRatio){
+      in_h = round(in_h * (originalAspectRatio / aspectRatio));
     }else{
-      in_h = in_w / aspectRatio;
+      in_w = round(in_w * (aspectRatio / originalAspectRatio));
     }
 
     const int out_w = out->width;
@@ -372,11 +398,12 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     if(out_h <= 0 || out_w <= 0)
         goto bypass;
 
+    av_log(zoom, AV_LOG_DEBUG, "original in_w: %d in_h: %d\n", in->width, in->height);
     av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
     av_log(zoom, AV_LOG_DEBUG, "out_w: %d out_h: %d\n", out_w, out_h);
 
-    const int dx = av_clip_c(in->width * x - in_w / 2, 0, in->width - in_w);
-    const int dy = av_clip_c(in->height * y - in_h / 2, 0, in->height - in_h);
+    const int dx = FFMIN(FFMAX(in->width * x - in_w / 2, 0), FFMAX(in->width - in_w, 0));
+    const int dy = FFMIN(FFMAX(in->height * y - in_h / 2, 0), FFMAX(in->height - in_h, 0));
     av_log(zoom, AV_LOG_DEBUG, "x: %0.3f y: %0.3f\n", x, y);
     av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
 
@@ -391,6 +418,7 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "planes: %d\n", zoom->nb_planes);
     av_log(zoom, AV_LOG_DEBUG, "components: %d\n", zoom->nb_components);
 
+    // cutoff top left
     px[1] = px[2] = AV_CEIL_RSHIFT(dx, chroma_w);
     //                    support for yuv*, rgb*, etc... (any components & planes)
     px[0] = px[3] = dx * (1.0 * zoom->nb_components / zoom->nb_planes);
@@ -401,6 +429,7 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     for (int k = 0; in->data[k]; k++)
         input[k] = in->data[k] + py[k] * in->linesize[k] + px[k];
 
+    // stretching bottom right
     av_opt_set_int(zoom->sws, "srcw", in_w, 0);
     av_opt_set_int(zoom->sws, "srch", in_h, 0);
     av_opt_set_int(zoom->sws, "src_format", in_f, 0);
@@ -462,12 +491,12 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         offset = zoom->schedule_size * 3 - 3;
       }
 
-      av_log(zoom, AV_LOG_DEBUG, "schedule index %ld x:%.3f y:%.3f z:%.3f\n", offset / 3, zoom->schedule_size, zoom->schedule_size * 3);
-
       // XYZ
       zoom->x = zoom->var_values[VAR_X] = schedule[offset + 0];
       zoom->y = zoom->var_values[VAR_Y] = schedule[offset + 1];
       zoom_val = zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = schedule[offset + 2];
+      av_log(zoom, AV_LOG_DEBUG, "schedule index %ld x:%.3f y:%.3f z:%.3f\n", offset / 3, zoom->x, zoom->y, zoom->zoom);
+
     }else{
       // eval Z (zoom)
       zoom_val = zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = av_expr_eval(zoom->zoom_expr,
