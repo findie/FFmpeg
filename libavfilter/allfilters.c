@@ -143,6 +143,7 @@ extern AVFilter ff_asrc_sine;
 
 extern AVFilter ff_asink_anullsink;
 
+extern AVFilter ff_vf_addroi;
 extern AVFilter ff_vf_alphaextract;
 extern AVFilter ff_vf_alphamerge;
 extern AVFilter ff_vf_amplify;
@@ -389,6 +390,7 @@ extern AVFilter ff_vf_unpremultiply;
 extern AVFilter ff_vf_unsharp;
 extern AVFilter ff_vf_unsharp_opencl;
 extern AVFilter ff_vf_uspp;
+extern AVFilter ff_vf_v360;
 extern AVFilter ff_vf_vaguedenoiser;
 extern AVFilter ff_vf_vectorscope;
 extern AVFilter ff_vf_vflip;
