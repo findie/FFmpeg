@@ -84,6 +84,8 @@ typedef struct ZoomContext {
     double  var_values[VAR_VARS_NB];
 
     struct SwsContext* sws;
+
+    int hsub, vsub;
 } ZoomContext;
 
 enum {
@@ -144,6 +146,9 @@ static int config_props(AVFilterLink *inlink)
     ZoomContext *zoom = ctx->priv;
 
     zoom->desc = av_pix_fmt_desc_get(inlink->format);
+
+    zoom->hsub = zoom->desc->log2_chroma_w;
+    zoom->vsub = zoom->desc->log2_chroma_h;
 
     zoom->nb_planes = av_pix_fmt_count_planes(inlink->format);
     zoom->nb_components = zoom->desc->nb_components;
@@ -284,6 +289,13 @@ static AVFrame* alloc_frame(enum AVPixelFormat pixfmt, int w, int h)
     return frame;
 }
 
+static inline int normalize_xy(double d, int chroma_sub)
+{
+  if (isnan(d))
+    return INT_MAX;
+  return (int)d & ~((1 << chroma_sub) - 1);
+}
+
 static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
 {
     av_log(zoom, AV_LOG_DEBUG, "zoom out\n");
@@ -402,9 +414,18 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
     av_log(zoom, AV_LOG_DEBUG, "out_w: %d out_h: %d\n", out_w, out_h);
 
-    const int dx = FFMIN(FFMAX(in->width * x - in_w / 2, 0), FFMAX(in->width - in_w, 0));
-    const int dy = FFMIN(FFMAX(in->height * y - in_h / 2, 0), FFMAX(in->height - in_h, 0));
+    const double pix_x = in->width * x - in_w / 2.0;
+    const double pix_y = in->height * y - in_h / 2.0;
+
+    const int dx = normalize_xy(
+        FFMIN(FFMAX(pix_x, 0), FFMAX(in->width - in_w, 0)),
+        zoom->hsub);
+    const int dy = normalize_xy(
+        FFMIN(FFMAX(pix_y, 0), FFMAX(in->height - in_h, 0)),
+        zoom->vsub);
+
     av_log(zoom, AV_LOG_DEBUG, "x: %0.3f y: %0.3f\n", x, y);
+    av_log(zoom, AV_LOG_DEBUG, "pix_x: %.3f pix_y: %.3f\n", pix_x, pix_y);
     av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
 
 
