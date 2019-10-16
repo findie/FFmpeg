@@ -76,10 +76,8 @@ typedef struct MpegTSWrite {
     MpegTSSection pat; /* MPEG-2 PAT table */
     MpegTSSection sdt; /* MPEG-2 SDT table context */
     MpegTSService **services;
-    int sdt_packet_count;
-    int sdt_packet_period;
-    int pat_packet_count;
-    int pat_packet_period;
+    int64_t sdt_period; /* SDT period in PCR time base */
+    int64_t pat_period; /* PAT/PMT period in PCR time base */
     int nb_services;
     int onid;
     int tsid;
@@ -97,7 +95,7 @@ typedef struct MpegTSWrite {
     int start_pid;
     int m2ts_mode;
 
-    int pcr_period;
+    int pcr_period_ms;
 #define MPEGTS_FLAG_REEMIT_PAT_PMT  0x01
 #define MPEGTS_FLAG_AAC_LATM        0x02
 #define MPEGTS_FLAG_PAT_PMT_AT_FRAMES           0x04
@@ -106,8 +104,8 @@ typedef struct MpegTSWrite {
     int flags;
     int copyts;
     int tables_version;
-    double pat_period;
-    double sdt_period;
+    int64_t pat_period_us;
+    int64_t sdt_period_us;
     int64_t last_pat_ts;
     int64_t last_sdt_ts;
 
@@ -790,10 +788,11 @@ static void enable_pcr_generation_for_stream(AVFormatContext *s, AVStream *pcr_s
     MpegTSWrite *ts = s->priv_data;
     MpegTSWriteStream *ts_st = pcr_st->priv_data;
 
-    if (ts->mux_rate > 1) {
-        ts_st->pcr_period = av_rescale(ts->pcr_period, PCR_TIME_BASE, 1000);
+    if (ts->mux_rate > 1 || ts->pcr_period_ms >= 0) {
+        int pcr_period_ms = ts->pcr_period_ms == -1 ? PCR_RETRANS_TIME : ts->pcr_period_ms;
+        ts_st->pcr_period = av_rescale(pcr_period_ms, PCR_TIME_BASE, 1000);
     } else {
-        /* For VBR we select the highest multiple of frame duration which is less than 100 ms. */
+        /* By default, for VBR we select the highest multiple of frame duration which is less than 100 ms. */
         int64_t frame_period = 0;
         if (pcr_st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             int frame_size = av_get_audio_frame_duration2(pcr_st->codecpar, 0);
@@ -977,17 +976,6 @@ static int mpegts_init(AVFormatContext *s)
 
     av_freep(&pids);
 
-    if (ts->mux_rate > 1) {
-        ts->sdt_packet_period      = (int64_t)ts->mux_rate * SDT_RETRANS_TIME /
-                                     (TS_PACKET_SIZE * 8 * 1000);
-        ts->pat_packet_period      = (int64_t)ts->mux_rate * PAT_RETRANS_TIME /
-                                     (TS_PACKET_SIZE * 8 * 1000);
-    } else {
-        /* Arbitrary values, PAT/PMT will also be written on video key frames */
-        ts->sdt_packet_period = 200;
-        ts->pat_packet_period = 40;
-    }
-
     if (ts->copyts < 1)
         ts->first_pcr = av_rescale(s->max_delay, PCR_TIME_BASE, AV_TIME_BASE);
 
@@ -995,24 +983,17 @@ static int mpegts_init(AVFormatContext *s)
 
     ts->last_pat_ts = AV_NOPTS_VALUE;
     ts->last_sdt_ts = AV_NOPTS_VALUE;
-    // The user specified a period, use only it
-    if (ts->pat_period < INT_MAX/2) {
-        ts->pat_packet_period = INT_MAX;
-    }
-    if (ts->sdt_period < INT_MAX/2) {
-        ts->sdt_packet_period = INT_MAX;
-    }
-
-    ts->pat_packet_count      = ts->pat_packet_period - 1;
-    ts->sdt_packet_count      = ts->sdt_packet_period - 1;
+    ts->pat_period = av_rescale(ts->pat_period_us, PCR_TIME_BASE, AV_TIME_BASE);
+    ts->sdt_period = av_rescale(ts->sdt_period_us, PCR_TIME_BASE, AV_TIME_BASE);
 
     if (ts->mux_rate == 1)
         av_log(s, AV_LOG_VERBOSE, "muxrate VBR, ");
     else
         av_log(s, AV_LOG_VERBOSE, "muxrate %d, ", ts->mux_rate);
     av_log(s, AV_LOG_VERBOSE,
-           "sdt every %d, pat/pmt every %d pkts\n",
-           ts->sdt_packet_period, ts->pat_packet_period);
+           "sdt every %"PRId64" ms, pat/pmt every %"PRId64" ms\n",
+           av_rescale(ts->sdt_period, 1000, PCR_TIME_BASE),
+           av_rescale(ts->pat_period, 1000, PCR_TIME_BASE));
 
     if (ts->m2ts_mode == -1) {
         if (av_match_ext(s->url, "m2ts")) {
@@ -1030,27 +1011,24 @@ fail:
 }
 
 /* send SDT, PAT and PMT tables regularly */
-static void retransmit_si_info(AVFormatContext *s, int force_pat, int64_t dts)
+static void retransmit_si_info(AVFormatContext *s, int force_pat, int force_sdt, int64_t pcr)
 {
     MpegTSWrite *ts = s->priv_data;
     int i;
 
-    if (++ts->sdt_packet_count == ts->sdt_packet_period ||
-        (dts != AV_NOPTS_VALUE && ts->last_sdt_ts == AV_NOPTS_VALUE) ||
-        (dts != AV_NOPTS_VALUE && dts - ts->last_sdt_ts >= ts->sdt_period*90000.0)
+    if ((pcr != AV_NOPTS_VALUE && ts->last_sdt_ts == AV_NOPTS_VALUE) ||
+        (pcr != AV_NOPTS_VALUE && pcr - ts->last_sdt_ts >= ts->sdt_period) ||
+        force_sdt
     ) {
-        ts->sdt_packet_count = 0;
-        if (dts != AV_NOPTS_VALUE)
-            ts->last_sdt_ts = FFMAX(dts, ts->last_sdt_ts);
+        if (pcr != AV_NOPTS_VALUE)
+            ts->last_sdt_ts = FFMAX(pcr, ts->last_sdt_ts);
         mpegts_write_sdt(s);
     }
-    if (++ts->pat_packet_count == ts->pat_packet_period ||
-        (dts != AV_NOPTS_VALUE && ts->last_pat_ts == AV_NOPTS_VALUE) ||
-        (dts != AV_NOPTS_VALUE && dts - ts->last_pat_ts >= ts->pat_period*90000.0) ||
+    if ((pcr != AV_NOPTS_VALUE && ts->last_pat_ts == AV_NOPTS_VALUE) ||
+        (pcr != AV_NOPTS_VALUE && pcr - ts->last_pat_ts >= ts->pat_period) ||
         force_pat) {
-        ts->pat_packet_count = 0;
-        if (dts != AV_NOPTS_VALUE)
-            ts->last_pat_ts = FFMAX(dts, ts->last_pat_ts);
+        if (pcr != AV_NOPTS_VALUE)
+            ts->last_pat_ts = FFMAX(pcr, ts->last_pat_ts);
         mpegts_write_pat(s);
         for (i = 0; i < ts->nb_services; i++)
             mpegts_write_pmt(s, ts->services[i]);
@@ -1180,18 +1158,30 @@ static void mpegts_write_pes(AVFormatContext *s, AVStream *st,
     int afc_len, stuffing_len;
     int64_t delay = av_rescale(s->max_delay, 90000, AV_TIME_BASE);
     int force_pat = st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && key && !ts_st->prev_payload_key;
+    int force_sdt = 0;
 
     av_assert0(ts_st->payload != buf || st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO);
     if (ts->flags & MPEGTS_FLAG_PAT_PMT_AT_FRAMES && st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
         force_pat = 1;
     }
 
+    if (ts->flags & MPEGTS_FLAG_REEMIT_PAT_PMT) {
+        force_pat = 1;
+        force_sdt = 1;
+        ts->flags &= ~MPEGTS_FLAG_REEMIT_PAT_PMT;
+    }
+
     is_start = 1;
     while (payload_size > 0) {
-        int64_t pcr = -1; /* avoid warning */
+        int64_t pcr = AV_NOPTS_VALUE;
+        if (ts->mux_rate > 1)
+            pcr = get_pcr(ts, s->pb);
+        else if (dts != AV_NOPTS_VALUE)
+            pcr = (dts - delay) * 300;
 
-        retransmit_si_info(s, force_pat, dts);
+        retransmit_si_info(s, force_pat, force_sdt, pcr);
         force_pat = 0;
+        force_sdt = 0;
 
         write_pcr = 0;
         if (ts->mux_rate > 1) {
@@ -1220,23 +1210,20 @@ static void mpegts_write_pes(AVFormatContext *s, AVStream *st,
                 }
                 ts->next_pcr = next_pcr;
             }
-        } else if (ts_st->pcr_period && dts != AV_NOPTS_VALUE) {
-            pcr = (dts - delay) * 300;
+            if (dts != AV_NOPTS_VALUE && (dts - pcr / 300) > delay) {
+                /* pcr insert gets priority over null packet insert */
+                if (write_pcr)
+                    mpegts_insert_pcr_only(s, st);
+                else
+                    mpegts_insert_null_packet(s);
+                /* recalculate write_pcr and possibly retransmit si_info */
+                continue;
+            }
+        } else if (ts_st->pcr_period && pcr != AV_NOPTS_VALUE) {
             if (pcr - ts_st->last_pcr >= ts_st->pcr_period && is_start) {
                 ts_st->last_pcr = FFMAX(pcr - ts_st->pcr_period, ts_st->last_pcr + ts_st->pcr_period);
                 write_pcr = 1;
             }
-        }
-
-        if (ts->mux_rate > 1 && dts != AV_NOPTS_VALUE &&
-            (dts - get_pcr(ts, s->pb) / 300) > delay) {
-            /* pcr insert gets priority over null packet insert */
-            if (write_pcr)
-                mpegts_insert_pcr_only(s, st);
-            else
-                mpegts_insert_null_packet(s);
-            /* recalculate write_pcr and possibly retransmit si_info */
-            continue;
         }
 
         /* prepare packet header */
@@ -1544,6 +1531,7 @@ static int mpegts_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
     MpegTSWrite *ts = s->priv_data;
     MpegTSWriteStream *ts_st = st->priv_data;
     const int64_t delay = av_rescale(s->max_delay, 90000, AV_TIME_BASE) * 2;
+    const int64_t max_audio_delay = av_rescale(s->max_delay, 90000, AV_TIME_BASE) / 2;
     int64_t dts = pkt->dts, pts = pkt->pts;
     int opus_samples = 0;
     int side_data_size;
@@ -1555,12 +1543,6 @@ static int mpegts_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
                                         &side_data_size);
     if (side_data)
         stream_id = side_data[0];
-
-    if (ts->flags & MPEGTS_FLAG_REEMIT_PAT_PMT) {
-        ts->pat_packet_count = ts->pat_packet_period - 1;
-        ts->sdt_packet_count = ts->sdt_packet_period - 1;
-        ts->flags           &= ~MPEGTS_FLAG_REEMIT_PAT_PMT;
-    }
 
     if (ts->copyts < 1) {
         if (pts != AV_NOPTS_VALUE)
@@ -1748,25 +1730,9 @@ static int mpegts_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
         }
     }
 
-    if (pkt->dts != AV_NOPTS_VALUE) {
-        int i;
-        for(i=0; i<s->nb_streams; i++) {
-            AVStream *st2 = s->streams[i];
-            MpegTSWriteStream *ts_st2 = st2->priv_data;
-            if (   ts_st2->payload_size
-               && (ts_st2->payload_dts == AV_NOPTS_VALUE || dts - ts_st2->payload_dts > delay/2)) {
-                mpegts_write_pes(s, st2, ts_st2->payload, ts_st2->payload_size,
-                                 ts_st2->payload_pts, ts_st2->payload_dts,
-                                 ts_st2->payload_flags & AV_PKT_FLAG_KEY, stream_id);
-                ts_st2->payload_size = 0;
-            }
-        }
-    }
-
     if (ts_st->payload_size && (ts_st->payload_size + size > ts->pes_payload_size ||
         (dts != AV_NOPTS_VALUE && ts_st->payload_dts != AV_NOPTS_VALUE &&
-         av_compare_ts(dts - ts_st->payload_dts, st->time_base,
-                       s->max_delay, AV_TIME_BASE_Q) >= 0) ||
+         dts - ts_st->payload_dts >= max_audio_delay) ||
         ts_st->opus_queued_samples + opus_samples >= 5760 /* 120ms */)) {
         mpegts_write_pes(s, st, ts_st->payload, ts_st->payload_size,
                          ts_st->payload_pts, ts_st->payload_dts,
@@ -1963,14 +1929,14 @@ static const AVOption options[] = {
       offsetof(MpegTSWrite, omit_video_pes_length), AV_OPT_TYPE_BOOL,
       { .i64 = 1 }, 0, 1, AV_OPT_FLAG_ENCODING_PARAM },
     { "pcr_period", "PCR retransmission time in milliseconds",
-      offsetof(MpegTSWrite, pcr_period), AV_OPT_TYPE_INT,
-      { .i64 = PCR_RETRANS_TIME }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM },
+      offsetof(MpegTSWrite, pcr_period_ms), AV_OPT_TYPE_INT,
+      { .i64 = -1 }, -1, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM },
     { "pat_period", "PAT/PMT retransmission time limit in seconds",
-      offsetof(MpegTSWrite, pat_period), AV_OPT_TYPE_DOUBLE,
-      { .dbl = INT_MAX }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM },
+      offsetof(MpegTSWrite, pat_period_us), AV_OPT_TYPE_DURATION,
+      { .i64 = PAT_RETRANS_TIME * 1000LL }, 0, INT64_MAX, AV_OPT_FLAG_ENCODING_PARAM },
     { "sdt_period", "SDT retransmission time limit in seconds",
-      offsetof(MpegTSWrite, sdt_period), AV_OPT_TYPE_DOUBLE,
-      { .dbl = INT_MAX }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM },
+      offsetof(MpegTSWrite, sdt_period_us), AV_OPT_TYPE_DURATION,
+      { .i64 = SDT_RETRANS_TIME * 1000LL }, 0, INT64_MAX, AV_OPT_FLAG_ENCODING_PARAM },
     { NULL },
 };
 
