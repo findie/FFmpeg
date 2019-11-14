@@ -15,6 +15,15 @@ version <next>:
 - scroll video filter
 - photosensitivity filter
 - anlms filter
+- arnndn filter
+- bilateral filter
+- maskedmin and maskedmax filters
+- VDPAU VP9 hwaccel
+- median filter
+- QSV-accelerated VP9 encoding
+- AV1 encoding support via librav1e
+- AV1 frame merge bitstream filter
+- AV1 Annex B demuxer
 
 
 version 4.2:

@@ -164,6 +164,11 @@ static void libdav1d_data_free(const uint8_t *data, void *opaque) {
     av_buffer_unref(&buf);
 }
 
+static void libdav1d_user_data_free(const uint8_t *data, void *opaque) {
+    av_assert0(data == opaque);
+    av_free(opaque);
+}
+
 static int libdav1d_receive_frame(AVCodecContext *c, AVFrame *frame)
 {
     Libdav1dContext *dav1d = c->priv_data;
@@ -191,6 +196,23 @@ static int libdav1d_receive_frame(AVCodecContext *c, AVFrame *frame)
 
             pkt.buf = NULL;
             av_packet_unref(&pkt);
+
+            if (c->reordered_opaque != AV_NOPTS_VALUE) {
+                uint8_t *reordered_opaque = av_malloc(sizeof(c->reordered_opaque));
+                if (!reordered_opaque) {
+                    dav1d_data_unref(data);
+                    return AVERROR(ENOMEM);
+                }
+
+                memcpy(reordered_opaque, &c->reordered_opaque, sizeof(c->reordered_opaque));
+                res = dav1d_data_wrap_user_data(data, reordered_opaque,
+                                                libdav1d_user_data_free, reordered_opaque);
+                if (res < 0) {
+                    av_free(reordered_opaque);
+                    dav1d_data_unref(data);
+                    return res;
+                }
+            }
         }
     }
 
@@ -259,6 +281,18 @@ static int libdav1d_receive_frame(AVCodecContext *c, AVFrame *frame)
         frame->format = c->pix_fmt = pix_fmt_rgb[p->seq_hdr->hbd];
     else
         frame->format = c->pix_fmt = pix_fmt[p->p.layout][p->seq_hdr->hbd];
+
+    if (p->m.user_data.data)
+        memcpy(&frame->reordered_opaque, p->m.user_data.data, sizeof(frame->reordered_opaque));
+    else
+        frame->reordered_opaque = AV_NOPTS_VALUE;
+
+    if (p->seq_hdr->num_units_in_tick && p->seq_hdr->time_scale) {
+        av_reduce(&c->framerate.den, &c->framerate.num,
+                  p->seq_hdr->num_units_in_tick, p->seq_hdr->time_scale, INT_MAX);
+        if (p->seq_hdr->equal_picture_interval)
+            c->ticks_per_frame = p->seq_hdr->num_ticks_per_picture;
+    }
 
     // match timestamps and packet size
     frame->pts = frame->best_effort_timestamp = p->m.timestamp;
