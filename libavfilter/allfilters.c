@@ -427,6 +427,7 @@ extern AVFilter ff_vf_zscale;
 extern AVFilter ff_vf_zoom;
 extern AVFilter ff_vf_framechange;
 extern AVFilter ff_vf_ssimchange;
+extern AVFilter ff_vf_tint;
 
 extern AVFilter ff_vsrc_allrgb;
 extern AVFilter ff_vsrc_allyuv;
