@@ -45,6 +45,17 @@ struct YUV {
     uint8_t Y, U, V;
 };
 
+typedef struct ThreadData {
+    uint8_t* template;
+    int template_w, template_h, template_linesize;
+
+    uint8_t* dest;
+    int dest_w, dest_h, dest_linesize;
+
+    uint8_t from_value, to_value;
+    float strength;
+} ThreadData;
+
 typedef struct TintContext {
     const AVClass *class;
     int nb_planes;
@@ -128,6 +139,49 @@ static int config_props(AVFilterLink *inlink)
     return 0;
 }
 
+static int tint_plane_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs) {
+  TintContext *s = ctx->priv;
+  ThreadData *td = arg;
+
+  uint8_t *template = td->template;
+  int template_w = td->template_w;
+  int template_h = td->template_h;
+  int template_linesize = td->template_linesize;
+
+  uint8_t *dest = td->dest;
+  int dest_w = td->dest_w;
+  int dest_h = td->dest_h;
+  int dest_linesize = td->dest_linesize;
+
+  uint8_t from_value = td->from_value;
+  uint8_t to_value = td->to_value;
+  float strength = td->strength;
+
+  const int slice_start = (dest_h *  jobnr   ) / nb_jobs;
+  const int slice_end   = (dest_h * (jobnr+1)) / nb_jobs;
+
+  uint8_t w_mult = template_w / dest_w;
+  uint8_t h_mult = template_h / dest_h;
+
+  unsigned int dest_stride = dest_linesize;
+  unsigned int template_stride = template_linesize;
+
+  float lerp_range = to_value - from_value;
+
+  for (unsigned int y = slice_start; y < slice_end; y++) {
+    for (unsigned int x = 0; x < dest_w; x++) {
+      uint8_t template_value = template[(y * h_mult) * template_stride + x * w_mult];
+
+      dest[y * dest_stride + x] =
+          (dest[y * dest_stride + x] * (1 - strength)) +
+          ((template_value / 255.0f * lerp_range + from_value) * strength);
+    }
+  }
+
+  return 0;
+}
+
+
 static void tint_plane(uint8_t *template, int template_w, int template_h, int template_linesize,
                       uint8_t *dest, int dest_w, int dest_h, int dest_linesize,
                       uint8_t from_value, uint8_t to_value, float strength) {
@@ -142,10 +196,8 @@ static void tint_plane(uint8_t *template, int template_w, int template_h, int te
 
   for (unsigned int y = 0; y < dest_h; y++) {
     for (unsigned int x = 0; x < dest_w; x++) {
-//      printf("X: %d (%d) Y: %d (%d) (source X: %d (%d) Y: %d (%d))\n", x, dest_w, y, dest_h, x * w_mult, template_w, y * h_mult, template_h);
       uint8_t template_value = template[(y * h_mult) * template_stride + x * w_mult];
 
-      // floor(val / ${format_range} * ${lerp_range} + ${from})
       dest[y * dest_stride + x] =
           (dest[y * dest_stride + x] * (1 - strength)) +
           ((template_value / 255.0f * lerp_range + from_value) * strength);
@@ -179,20 +231,46 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     int template_linesize = in->linesize[0];
 
     if(tint->strength > 0) {
+      ThreadData td;
+      td.strength = tint->strength;
+
+      // common data
+      td.template = template_luma;
+      td.template_w = frame_w;
+      td.template_h = frame_h;
+      td.template_linesize = template_linesize;
+
       // color components
-      tint_plane(template_luma, frame_w, frame_h, template_linesize,
-                 out->data[1], tint->planes[1].width, tint->planes[1].height, in->linesize[1],
-                 tint->_from.U, tint->_to.U, tint->strength
-      );
-      tint_plane(template_luma, frame_w, frame_h, template_linesize,
-                 out->data[2], tint->planes[2].width, tint->planes[2].height, in->linesize[2],
-                 tint->_from.V, tint->_to.V, tint->strength
-      );
+      td.dest = out->data[1];
+      td.dest_w = tint->planes[1].width;
+      td.dest_h = tint->planes[1].height;
+      td.dest_linesize = in->linesize[1];
+      td.from_value = tint->_from.U;
+      td.to_value = tint->_to.U;
+
+      ctx->internal->execute(ctx, tint_plane_slice, &td, NULL, FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
+      emms_c();
+
+      td.dest = out->data[2];
+      td.dest_w = tint->planes[2].width;
+      td.dest_h = tint->planes[2].height;
+      td.dest_linesize = in->linesize[2];
+      td.from_value = tint->_from.V;
+      td.to_value = tint->_to.V;
+
+      ctx->internal->execute(ctx, tint_plane_slice, &td, NULL, FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
+      emms_c();
+
       // last is luma (which may also be the template)
-      tint_plane(template_luma, frame_w, frame_h, template_linesize,
-                 out->data[0], tint->planes[0].width, tint->planes[0].height, in->linesize[0],
-                 tint->_from.Y, tint->_to.Y, tint->strength
-      );
+      td.dest = out->data[0];
+      td.dest_w = tint->planes[0].width;
+      td.dest_h = tint->planes[0].height;
+      td.dest_linesize = in->linesize[0];
+      td.from_value = tint->_from.Y;
+      td.to_value = tint->_to.Y;
+
+      ctx->internal->execute(ctx, tint_plane_slice, &td, NULL, FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
+      emms_c();
     }
 
     if (!direct)
@@ -238,5 +316,5 @@ AVFilter ff_vf_tint = {
     .inputs        = tint_inputs,
     .outputs       = tint_outputs,
     .priv_class    = &tint_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
 };
