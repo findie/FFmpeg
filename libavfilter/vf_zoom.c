@@ -88,6 +88,10 @@ typedef struct ZoomContext {
     int hsub, vsub;
 } ZoomContext;
 
+#define SUBPIXEL_LUT_RESOLUTION 1000
+int  subpixel_LUT_inited = 0;
+char subpixel_LUT[256][256][SUBPIXEL_LUT_RESOLUTION];
+
 enum {
     FAST_BILINEAR   = SWS_FAST_BILINEAR,
     BILINEAR        = SWS_BILINEAR,
@@ -133,6 +137,21 @@ AVFILTER_DEFINE_CLASS(zoom);
 
 static av_cold int init(AVFilterContext *ctx)
 {
+
+    if(!subpixel_LUT_inited){
+        subpixel_LUT_inited = 1;
+
+        for(int i = 0; i < 256; i++) {
+            for(int j = 0; j < 256; j++) {
+                for(int k = 0; k < SUBPIXEL_LUT_RESOLUTION; k++) {
+                    subpixel_LUT[i][j][k] = i *      k / (float)SUBPIXEL_LUT_RESOLUTION +
+                                            j * (1 - k / (float)SUBPIXEL_LUT_RESOLUTION);
+                }
+            }
+        }
+
+    }
+
     return 0;
 }
 
@@ -294,6 +313,74 @@ static inline int normalize_xy(double d, int chroma_sub)
   if (isnan(d))
     return INT_MAX;
   return (int)d & ~((1 << chroma_sub) - 1);
+}
+
+static inline float decimal_part(float d){
+    return d - (int64_t)d;
+}
+
+static inline uint8_t *pointer_at(FFDrawContext *draw, uint8_t *data[], int linesize[],
+                           int plane, int x, int y)
+{
+    return data[plane] +
+           (y >> draw->vsub[plane]) * linesize[plane] +
+           (x >> draw->hsub[plane]) * draw->pixelstep[plane];
+}
+
+static void ff_copy_rectangle_subpixel(FFDrawContext *draw,
+                                uint8_t *dst[], int dst_linesize[],
+                                uint8_t *src[], int src_linesize[],
+                                int dst_x, int dst_y, int src_x, int src_y,
+                                int w, int h, float sub_x, float sub_y)
+{
+
+    int plane, y, x, wp, hp;
+    int plane_step, copy_w, plane_depth, pixel_step;
+    int start_x_src;
+    uint8_t *p, *q;
+
+    float inverted_sub_x = 1 - sub_x;
+
+    for (plane = 0; plane < draw->nb_planes; plane++) {
+        start_x_src = (src_x >> draw->hsub[plane]) * draw->pixelstep[plane];
+
+        p = pointer_at(draw, src, src_linesize, plane, src_x, src_y);
+        q = pointer_at(draw, dst, dst_linesize, plane, dst_x, dst_y);
+        wp = AV_CEIL_RSHIFT(w, draw->hsub[plane]) * draw->pixelstep[plane];
+        hp = AV_CEIL_RSHIFT(h, draw->vsub[plane]);
+
+        plane_step = draw->desc->comp[plane].step;
+        plane_depth = draw->desc->comp[plane].depth;
+        pixel_step = plane_step / (plane_depth / 8);
+        copy_w = wp / (plane_depth / 8);
+
+        for (y = 0; y < hp; y++) {
+
+            for(x = plane_step; x < copy_w; x ++) {
+                // x = (sin(t*PI/180) + 1)/2
+                // todo: optimize
+                // fixme: when feeding yuv444p10be it looks ok, yuv444p10le looks like it's backwards but it deosn't make sense
+                if (plane_depth == 8) {
+                    ((uint8_t*)q)[x - pixel_step] = ((uint8_t*)p)[x] * sub_x + ((uint8_t*)p)[x - pixel_step] * inverted_sub_x;
+                } else {
+                    ((uint16_t*)q)[x - pixel_step] = ((uint16_t*)p)[x] * sub_x + ((uint16_t*)p)[x - pixel_step] * inverted_sub_x;
+                }
+            }
+
+            // fill in the last column of pixels
+            for(x = copy_w - plane_step; x < copy_w; x++){
+                if (plane_depth == 8) {
+                    ((uint8_t*)q)[x] = ((uint8_t*)p)[x];
+                } else {
+                    ((uint16_t*)q)[x] = ((uint16_t*)p)[x];
+                }
+            }
+
+//            memcpy(q, p, wp);
+            p += src_linesize[plane];
+            q += dst_linesize[plane];
+        }
+    }
 }
 
 static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
@@ -536,10 +623,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_log(zoom, AV_LOG_WARNING, "x position %.2f is out of range of [0-1]\n", zoom->x);
         zoom->x = av_clipd_c(zoom->x, 0, 1);
     }
-		if(zoom->y < 0 || zoom->y > 1){
-				av_log(zoom, AV_LOG_WARNING, "y position %.2f is out of range of [0-1]\n", zoom->y);
-        zoom->y = av_clipd_c(zoom->y, 0, 1);
-		}
+	if(zoom->y < 0 || zoom->y > 1){
+		av_log(zoom, AV_LOG_WARNING, "y position %.2f is out of range of [0-1]\n", zoom->y);
+		zoom->y = av_clipd_c(zoom->y, 0, 1);
+	}
     // copy in the background
     ff_fill_rectangle(&zoom->dc, &zoom->fillcolor,
                       out->data, out->linesize,
@@ -550,13 +637,53 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     if(zoom_val == 1) {
         // it's 1, just copy
         // quite an expensive noop :D
-        ff_copy_rectangle2(&zoom->dc,
+
+        int from_x = av_clip_c(in_w * zoom->x - out_w / 2.0, 0, in_w - out_w);
+        int from_y = av_clip_c(in_h * zoom->y - out_h / 2.0, 0, in_h - out_h);
+        float sub_x = decimal_part(av_clipf_c(in_w * zoom->x - out_w / 2.0, 0.0, in_w - out_w));
+        float sub_y = decimal_part(av_clipf_c(in_h * zoom->y - out_h / 2.0, 0.0, in_h - out_h));
+
+        ff_copy_rectangle_subpixel(&zoom->dc,
                            out->data, out->linesize,
                            in->data, in->linesize,
                            0, 0,
-                           av_clip_c(in_w * zoom->x - out_w / 2.0, 0, in_w - out_w),
-                           av_clip_c(in_h * zoom->y - out_h / 2.0, 0, in_h - out_h),
-                           out_w, out_h);
+                           from_x,
+                           from_y,
+                           out_w, out_h, sub_x, sub_y);
+
+
+//        printf("%d",subpixel_LUT[0][0][0]);
+//        float subpixel_x = av_clipf_c(in_w * zoom->x - out_w / 2.0, 0.0, in_w - out_w);
+//        float subpixel_y = av_clipf_c(in_h * zoom->y - out_h / 2.0, 0.0, in_h - out_h);
+//        subpixel_x -= (int)subpixel_x;
+//        subpixel_y -= (int)subpixel_y;
+//
+//
+//        printf("zoom->desc->nb_components %d %s\n", zoom->desc->nb_components, zoom->desc->name);
+//        printf("out->linesize %d %d %d\n", out->linesize[0], out->linesize[1], out->linesize[2]);
+//
+//        printf("subpixel_x %.3f subpixel_y %.3f\n", subpixel_x, subpixel_y);
+//
+//        for (int c = 0; c < zoom->desc->nb_components; c++){
+//                for (int y = 0; y < out_h; y++){
+//
+//                        int line_start = y * out->linesize[c];
+//
+//
+//
+//                        for(int x = 1; x < out_w; x++){
+//
+////                                printf("y %d x %d c %d loc %d linesize %d\n",y,x,c,line_start + x - 1, out->linesize[c]);
+//
+//                                out->data[c][line_start + x - 1] =
+//                                        out->data[c][line_start + x - 1] * (1-subpixel_x) +
+//                                        out->data[c][line_start + x + 0] * (subpixel_x);
+//                        }
+//
+//
+//                }
+//        }
+
     } else if (zoom_val <= 0) {
         // if it's 0 or lower do nothing
         // noop
