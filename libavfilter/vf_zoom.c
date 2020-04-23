@@ -157,7 +157,58 @@ static av_cold int init(AVFilterContext *ctx)
 
 static int query_formats(AVFilterContext *ctx)
 {
-    return ff_set_common_formats(ctx, ff_draw_supported_pixel_formats(0));
+    static const enum AVPixelFormat pix_fmts[] = {
+        AV_PIX_FMT_YUV420P,
+        AV_PIX_FMT_RGB24,
+        AV_PIX_FMT_BGR24,
+        AV_PIX_FMT_YUV422P,
+        AV_PIX_FMT_YUV444P,
+        AV_PIX_FMT_YUV410P,
+        AV_PIX_FMT_YUV411P,
+        AV_PIX_FMT_GRAY8,
+        AV_PIX_FMT_YUVJ420P,
+        AV_PIX_FMT_YUVJ422P,
+        AV_PIX_FMT_YUVJ444P,
+        AV_PIX_FMT_NV12,
+        AV_PIX_FMT_NV21,
+        AV_PIX_FMT_ARGB,
+        AV_PIX_FMT_RGBA,
+        AV_PIX_FMT_ABGR,
+        AV_PIX_FMT_BGRA,
+        AV_PIX_FMT_GRAY16LE,
+        AV_PIX_FMT_YUV440P,
+        AV_PIX_FMT_YUVJ440P,
+        AV_PIX_FMT_YUVA420P,
+        AV_PIX_FMT_YUV420P16LE,
+        AV_PIX_FMT_YUV422P16LE,
+        AV_PIX_FMT_YUV444P16LE,
+        AV_PIX_FMT_YA8,
+        AV_PIX_FMT_GBRP,
+        AV_PIX_FMT_GBRP16LE,
+        AV_PIX_FMT_YUVA422P,
+        AV_PIX_FMT_YUVA444P,
+        AV_PIX_FMT_YUVA420P16LE,
+        AV_PIX_FMT_YUVA422P16LE,
+        AV_PIX_FMT_YUVA444P16LE,
+        AV_PIX_FMT_NV16,
+        AV_PIX_FMT_YA16LE,
+        AV_PIX_FMT_GBRAP,
+        AV_PIX_FMT_GBRAP16LE,
+        AV_PIX_FMT_0RGB,
+        AV_PIX_FMT_RGB0,
+        AV_PIX_FMT_0BGR,
+        AV_PIX_FMT_BGR0,
+        AV_PIX_FMT_YUVJ411P,
+        AV_PIX_FMT_NV24,
+        AV_PIX_FMT_NV42,
+
+        AV_PIX_FMT_NONE
+    };
+
+    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
+    if (!fmts_list)
+        return AVERROR(ENOMEM);
+    return ff_set_common_formats(ctx, fmts_list);
 }
 static int config_props(AVFilterLink *inlink)
 {
@@ -327,59 +378,103 @@ static inline uint8_t *pointer_at(FFDrawContext *draw, uint8_t *data[], int line
            (x >> draw->hsub[plane]) * draw->pixelstep[plane];
 }
 
+
+#define intra_field_calc_8  ((uint8_t*)q)[x - pixel_step] = subpixel_LUT[ ((uint8_t*)p)[x] ]                    \
+                                                                        [ ((uint8_t*)p)[x - pixel_step] ]       \
+                                                                        [ subpix_x_bucket ]
+
+#define intra_field_calc_16 ((uint16_t*)q)[x - pixel_step] = ((uint16_t*)p)[x] * sub_x + ((uint16_t*)p)[x - pixel_step] * inverted_sub_x
+#define intra_field_calc_16_disabled ((uint16_t*)q)[x - pixel_step] = ((uint16_t*)p)[x - pixel_step]
+
+#define intra_field_copy_8  ((uint8_t*)q)[x] = ((uint8_t*)p)[x]
+#define intra_field_copy_16 ((uint16_t*)q)[x] = ((uint16_t*)p)[x]
+
+#define inter_field_calc_8  ((uint8_t*)q_)[x] = subpixel_LUT[ ((uint8_t*)q)[x] ] \
+                                                            [ ((uint8_t*)q_)[x] ] \
+                                                            [ subpix_y_bucket ]
+
+#define inter_field_calc_16 ((uint16_t*)q_)[x] = ((uint16_t*)q)[x] * sub_y + ((uint16_t*)q_)[x] * inverted_sub_y
+#define inter_field_calc_16_disabled {}while(0)
+
+#define ff_copy_rectangle_subpixel_mapping(intra_calc, intra_copy, inter_calc) ({ \
+        for (y = 0; y < hp; y++) {                                                                      \
+\
+            for(x = pixel_step; x < copy_w; x ++) {                                          \
+                intra_calc;                                                                             \
+            }                                                                                           \
+\
+            /* fill in the last column of pixels */                                                     \
+            /* this should set the last pixel as the one before * inverted_sub_x + current one * sub_x */\
+            /* as it is right now, it generates a 1px pop-in effect on the last column */               \
+            for(x = copy_w - pixel_step; x < copy_w; x++){                                              \
+                intra_copy;                                                                             \
+            }                                                                                           \
+\
+            if(y > 0) {                                                                                 \
+                p_ = p - src_linesize[plane];                                                           \
+                q_ = q - dst_linesize[plane];                                                           \
+\
+                for(x = 0; x < copy_w; x ++){                                                           \
+                    inter_calc;                                                                         \
+                }                                                                                       \
+            }                                                                                           \
+\
+            p += src_linesize[plane];                                                                   \
+            q += dst_linesize[plane];                                                                   \
+        }                                                                                               \
+        /* todo: interpolate last row too like interpolating last column */                             \
+})
+
 static void ff_copy_rectangle_subpixel(FFDrawContext *draw,
-                                uint8_t *dst[], int dst_linesize[],
-                                uint8_t *src[], int src_linesize[],
-                                int dst_x, int dst_y, int src_x, int src_y,
-                                int w, int h, float sub_x, float sub_y)
+                                       uint8_t *dst[], int dst_linesize[],
+                                       uint8_t *src[], int src_linesize[],
+                                       int dst_x, int dst_y,
+                                       int src_x, int src_y,
+                                       int w, int h,
+                                       float original_sub_x, float original_sub_y)
 {
 
     int plane, y, x, wp, hp;
     int plane_step, copy_w, plane_depth, pixel_step;
-    int start_x_src;
-    uint8_t *p, *q;
+    uint8_t *p, *q, *p_, *q_;
+    uint8_t vsub, hsub;
 
-    float inverted_sub_x = 1 - sub_x;
+    float sub_x, sub_y;
+
+    float inverted_sub_x;
+    float inverted_sub_y;
+
+    uint16_t subpix_x_bucket = (sub_x * SUBPIXEL_LUT_RESOLUTION);
+    uint16_t subpix_y_bucket = (sub_y * SUBPIXEL_LUT_RESOLUTION);
 
     for (plane = 0; plane < draw->nb_planes; plane++) {
-        start_x_src = (src_x >> draw->hsub[plane]) * draw->pixelstep[plane];
-
         p = pointer_at(draw, src, src_linesize, plane, src_x, src_y);
         q = pointer_at(draw, dst, dst_linesize, plane, dst_x, dst_y);
-        wp = AV_CEIL_RSHIFT(w, draw->hsub[plane]) * draw->pixelstep[plane];
-        hp = AV_CEIL_RSHIFT(h, draw->vsub[plane]);
+        vsub = draw->vsub[plane];
+        hsub = draw->hsub[plane];
+        wp = AV_CEIL_RSHIFT(w, hsub) * draw->pixelstep[plane];
+        hp = AV_CEIL_RSHIFT(h, vsub);
 
         plane_step = draw->desc->comp[plane].step;
         plane_depth = draw->desc->comp[plane].depth;
         pixel_step = plane_step / (plane_depth / 8);
         copy_w = wp / (plane_depth / 8);
 
-        for (y = 0; y < hp; y++) {
+        sub_x = decimal_part((src_x + original_sub_x) / (1 << vsub));
+        sub_y = decimal_part((src_y + original_sub_y) / (1 << hsub));
 
-            for(x = plane_step; x < copy_w; x ++) {
-                // x = (sin(t*PI/180) + 1)/2
-                // todo: optimize
-                // fixme: when feeding yuv444p10be it looks ok, yuv444p10le looks like it's backwards but it deosn't make sense
-                if (plane_depth == 8) {
-                    ((uint8_t*)q)[x - pixel_step] = ((uint8_t*)p)[x] * sub_x + ((uint8_t*)p)[x - pixel_step] * inverted_sub_x;
-                } else {
-                    ((uint16_t*)q)[x - pixel_step] = ((uint16_t*)p)[x] * sub_x + ((uint16_t*)p)[x - pixel_step] * inverted_sub_x;
-                }
-            }
+        inverted_sub_x = 1 - sub_x;
+        inverted_sub_y = 1 - sub_y;
 
-            // fill in the last column of pixels
-            for(x = copy_w - plane_step; x < copy_w; x++){
-                if (plane_depth == 8) {
-                    ((uint8_t*)q)[x] = ((uint8_t*)p)[x];
-                } else {
-                    ((uint16_t*)q)[x] = ((uint16_t*)p)[x];
-                }
-            }
+        subpix_x_bucket = (sub_x * SUBPIXEL_LUT_RESOLUTION);
+        subpix_y_bucket = (sub_y * SUBPIXEL_LUT_RESOLUTION);
 
-//            memcpy(q, p, wp);
-            p += src_linesize[plane];
-            q += dst_linesize[plane];
+        if(plane_depth == 8) {
+            ff_copy_rectangle_subpixel_mapping(intra_field_calc_8,  intra_field_copy_8,  inter_field_calc_8);
+        }else{
+            ff_copy_rectangle_subpixel_mapping(intra_field_calc_16, intra_field_copy_16, inter_field_calc_16 );
         }
+
     }
 }
 
@@ -516,26 +611,50 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
 
 
-    int px[4], py[4];
-    uint8_t *input[4];
+//    int px[4], py[4];
+//    uint8_t *input[4];
 
-    uint8_t chroma_w = zoom->desc->log2_chroma_w;
-    uint8_t chroma_h = zoom->desc->log2_chroma_h;
-    av_log(zoom, AV_LOG_DEBUG, "chroma_w: %d chroma_h: %d\n", chroma_w, chroma_h);
-    av_log(zoom, AV_LOG_DEBUG, "l[0]: %d l[1]: %d l[2]: %d l[3]: %d \n", in->linesize[0], in->linesize[1],in->linesize[2],in->linesize[3]);
-    av_log(zoom, AV_LOG_DEBUG, "planes: %d\n", zoom->nb_planes);
-    av_log(zoom, AV_LOG_DEBUG, "components: %d\n", zoom->nb_components);
+//    uint8_t chroma_w = zoom->desc->log2_chroma_w;
+//    uint8_t chroma_h = zoom->desc->log2_chroma_h;
+//    av_log(zoom, AV_LOG_DEBUG, "chroma_w: %d chroma_h: %d\n", chroma_w, chroma_h);
+//    av_log(zoom, AV_LOG_DEBUG, "l[0]: %d l[1]: %d l[2]: %d l[3]: %d \n", in->linesize[0], in->linesize[1],in->linesize[2],in->linesize[3]);
+//    av_log(zoom, AV_LOG_DEBUG, "planes: %d\n", zoom->nb_planes);
+//    av_log(zoom, AV_LOG_DEBUG, "components: %d\n", zoom->nb_components);
 
     // cutoff top left
-    px[1] = px[2] = AV_CEIL_RSHIFT(dx, chroma_w);
+//    px[1] = px[2] = AV_CEIL_RSHIFT(dx, chroma_w);
     //                    support for yuv*, rgb*, etc... (any components & planes)
-    px[0] = px[3] = dx * (1.0 * zoom->nb_components / zoom->nb_planes);
+//    px[0] = px[3] = dx * (1.0 * zoom->nb_components / zoom->nb_planes);
 
-    py[1] = py[2] = AV_CEIL_RSHIFT(dy, chroma_h);
-    py[0] = py[3] = dy;
+//    py[1] = py[2] = AV_CEIL_RSHIFT(dy, chroma_h);
+//    py[0] = py[3] = dy;
 
-    for (int k = 0; in->data[k]; k++)
-        input[k] = in->data[k] + py[k] * in->linesize[k] + px[k];
+    AVFrame* small_crop = alloc_frame(in->format, in_w, in_h);
+    if (!small_crop) {
+        ret = AVERROR(ENOMEM);
+        goto error;
+    }
+
+    // this is the old way, just need to branch out if we want
+    // the fast path or not
+//    for (int k = 0; in->data[k]; k++)
+//        input[k] = in->data[k] + py[k] * in->linesize[k] + px[k];
+
+    // this is the new way
+
+    const float bound_pix_x = FFMIN(FFMAX(pix_x, 0), FFMAX(in->width - in_w, 0));
+    const float bound_pix_y = FFMIN(FFMAX(pix_y, 0), FFMAX(in->height - in_h, 0));
+
+    const float subpix_x = decimal_part(bound_pix_x);
+    const float subpix_y = decimal_part(bound_pix_y);
+//
+    ff_copy_rectangle_subpixel(&zoom->dc,
+                               small_crop->data, small_crop->linesize,
+                               in->data, in->linesize,
+                               0, 0,
+                               bound_pix_x, bound_pix_y,
+                               in_w, in_h,
+                               subpix_x, subpix_y);
 
     // stretching bottom right
     av_opt_set_int(zoom->sws, "srcw", in_w, 0);
@@ -550,8 +669,13 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     if ((ret = sws_init_context(zoom->sws, NULL, NULL)) < 0)
         goto error;
 
-    sws_scale(zoom->sws, (const uint8_t *const *)&input, in->linesize, 0, in_h, out->data, out->linesize);
+//    sws_scale(zoom->sws, (const uint8_t *const *)&input, in->linesize, 0, in_h, out->data, out->linesize);
+    sws_scale(zoom->sws,
+              small_crop->data, small_crop->linesize,
+              0, in_h,
+              out->data, out->linesize);
 
+    av_frame_free(&small_crop);
     sws_freeContext(zoom->sws);
     zoom->sws = NULL;
 
@@ -650,39 +774,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                            from_x,
                            from_y,
                            out_w, out_h, sub_x, sub_y);
-
-
-//        printf("%d",subpixel_LUT[0][0][0]);
-//        float subpixel_x = av_clipf_c(in_w * zoom->x - out_w / 2.0, 0.0, in_w - out_w);
-//        float subpixel_y = av_clipf_c(in_h * zoom->y - out_h / 2.0, 0.0, in_h - out_h);
-//        subpixel_x -= (int)subpixel_x;
-//        subpixel_y -= (int)subpixel_y;
-//
-//
-//        printf("zoom->desc->nb_components %d %s\n", zoom->desc->nb_components, zoom->desc->name);
-//        printf("out->linesize %d %d %d\n", out->linesize[0], out->linesize[1], out->linesize[2]);
-//
-//        printf("subpixel_x %.3f subpixel_y %.3f\n", subpixel_x, subpixel_y);
-//
-//        for (int c = 0; c < zoom->desc->nb_components; c++){
-//                for (int y = 0; y < out_h; y++){
-//
-//                        int line_start = y * out->linesize[c];
-//
-//
-//
-//                        for(int x = 1; x < out_w; x++){
-//
-////                                printf("y %d x %d c %d loc %d linesize %d\n",y,x,c,line_start + x - 1, out->linesize[c]);
-//
-//                                out->data[c][line_start + x - 1] =
-//                                        out->data[c][line_start + x - 1] * (1-subpixel_x) +
-//                                        out->data[c][line_start + x + 0] * (subpixel_x);
-//                        }
-//
-//
-//                }
-//        }
 
     } else if (zoom_val <= 0) {
         // if it's 0 or lower do nothing
