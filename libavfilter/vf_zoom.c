@@ -338,6 +338,7 @@ static int config_output(AVFilterLink *outlink)
     if(outlink->h <= 0){
       outlink->h = 2;
     }
+
     return 0;
 }
 
@@ -378,8 +379,8 @@ static inline uint8_t *pointer_at(FFDrawContext *draw, uint8_t *data[], int line
            (x >> draw->hsub[plane]) * draw->pixelstep[plane];
 }
 
-
-#define intra_field_calc_8  ((uint8_t*)q)[x - pixel_step] = subpixel_LUT[ ((uint8_t*)p)[x] ]                    \
+#define intra_field_calc_8      ((uint8_t*)q)[x - pixel_step] = ((uint8_t*)p)[x] * sub_x + ((uint8_t*)p)[x - pixel_step] * inverted_sub_x
+#define intra_field_calc_8_opt  ((uint8_t*)q)[x - pixel_step] = subpixel_LUT[ ((uint8_t*)p)[x] ]                    \
                                                                         [ ((uint8_t*)p)[x - pixel_step] ]       \
                                                                         [ subpix_x_bucket ]
 
@@ -389,7 +390,8 @@ static inline uint8_t *pointer_at(FFDrawContext *draw, uint8_t *data[], int line
 #define intra_field_copy_8  ((uint8_t*)q)[x] = ((uint8_t*)p)[x]
 #define intra_field_copy_16 ((uint16_t*)q)[x] = ((uint16_t*)p)[x]
 
-#define inter_field_calc_8  ((uint8_t*)q_)[x] = subpixel_LUT[ ((uint8_t*)q)[x] ] \
+#define inter_field_calc_8      ((uint8_t*)q_)[x] = ((uint8_t*)q)[x] * sub_y + ((uint8_t*)q_)[x] * inverted_sub_y
+#define inter_field_calc_8_opt  ((uint8_t*)q_)[x] = subpixel_LUT[ ((uint8_t*)q)[x] ] \
                                                             [ ((uint8_t*)q_)[x] ] \
                                                             [ subpix_y_bucket ]
 
@@ -470,7 +472,7 @@ static void ff_copy_rectangle_subpixel(FFDrawContext *draw,
         subpix_y_bucket = (sub_y * SUBPIXEL_LUT_RESOLUTION);
 
         if(plane_depth == 8) {
-            ff_copy_rectangle_subpixel_mapping(intra_field_calc_8,  intra_field_copy_8,  inter_field_calc_8);
+            ff_copy_rectangle_subpixel_mapping(intra_field_calc_8_opt,  intra_field_copy_8,  inter_field_calc_8_opt);
         }else{
             ff_copy_rectangle_subpixel_mapping(intra_field_calc_16, intra_field_copy_16, inter_field_calc_16 );
         }
@@ -569,17 +571,22 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
 
     const double zoom_val = zoom->zoom;
 
-          int in_w  = in->width / zoom_val;
-          int in_h  = in->height / zoom_val;
+        float in_w_f = in->width / zoom_val;
+        float in_h_f = in->height / zoom_val;
+
+          int in_w  = in_w_f;
+          int in_h  = in_h_f;
     const int in_f  = in->format;
 
-    const double originalAspectRatio = 1.0 * in_w / in_h;
+    const double originalAspectRatio = 1.0 * in_w_f / in_h_f;
     const double aspectRatio = zoom->outAspectRatio;
 
     if(originalAspectRatio < aspectRatio){
-      in_h = round(in_h * (originalAspectRatio / aspectRatio));
+      in_h_f = in_h_f * (originalAspectRatio / aspectRatio);
+      in_h = round(in_h_f);
     }else{
-      in_w = round(in_w * (aspectRatio / originalAspectRatio));
+      in_w_f = in_w_f * (aspectRatio / originalAspectRatio);
+      in_w = round(in_w_f);
     }
 
     const int out_w = out->width;
@@ -596,8 +603,8 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
     av_log(zoom, AV_LOG_DEBUG, "out_w: %d out_h: %d\n", out_w, out_h);
 
-    const double pix_x = in->width * x - in_w / 2.0;
-    const double pix_y = in->height * y - in_h / 2.0;
+    const double pix_x = in->width * x - in_w_f / 2.0;
+    const double pix_y = in->height * y - in_h_f / 2.0;
 
     const int dx = normalize_xy(
         FFMIN(FFMAX(pix_x, 0), FFMAX(in->width - in_w, 0)),
@@ -610,37 +617,23 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "pix_x: %.3f pix_y: %.3f\n", pix_x, pix_y);
     av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
 
-
-//    int px[4], py[4];
-//    uint8_t *input[4];
-
-//    uint8_t chroma_w = zoom->desc->log2_chroma_w;
-//    uint8_t chroma_h = zoom->desc->log2_chroma_h;
-//    av_log(zoom, AV_LOG_DEBUG, "chroma_w: %d chroma_h: %d\n", chroma_w, chroma_h);
-//    av_log(zoom, AV_LOG_DEBUG, "l[0]: %d l[1]: %d l[2]: %d l[3]: %d \n", in->linesize[0], in->linesize[1],in->linesize[2],in->linesize[3]);
-//    av_log(zoom, AV_LOG_DEBUG, "planes: %d\n", zoom->nb_planes);
-//    av_log(zoom, AV_LOG_DEBUG, "components: %d\n", zoom->nb_components);
-
-    // cutoff top left
-//    px[1] = px[2] = AV_CEIL_RSHIFT(dx, chroma_w);
-    //                    support for yuv*, rgb*, etc... (any components & planes)
-//    px[0] = px[3] = dx * (1.0 * zoom->nb_components / zoom->nb_planes);
-
-//    py[1] = py[2] = AV_CEIL_RSHIFT(dy, chroma_h);
-//    py[0] = py[3] = dy;
-
     AVFrame* small_crop = alloc_frame(in->format, in_w, in_h);
     if (!small_crop) {
         ret = AVERROR(ENOMEM);
         goto error;
     }
 
-    // this is the old way, just need to branch out if we want
-    // the fast path or not
-//    for (int k = 0; in->data[k]; k++)
-//        input[k] = in->data[k] + py[k] * in->linesize[k] + px[k];
-
-    // this is the new way
+    // fixme: there is an issue here when zooming in/out slowly
+    // the size changes and due to the scaling up being to the same values, the top/left jitters
+    //
+    // battle plan:
+    // 1. find the crop area (x, y, w and h according to new AR)
+    // 2. expand it by vsub/hsub px top/bottom/left/right where possible
+    // 3. crop with expanded area
+    // 4. scale up by zoom amount (use old zoom_in code from https://github.com/findie/FFmpeg/blob/190eaf3c027d1a343ac2b357d66a308191a3b448/libavfilter/vf_zoom.c#L417-L469)
+    // 5. calculate the new padding size (vsub/hsub * zoom)
+    // 6. use ff_copy_rectangle_subpixel to get the subpixel copy of the actual window
+    // 7. use that as final image
 
     const float bound_pix_x = FFMIN(FFMAX(pix_x, 0), FFMAX(in->width - in_w, 0));
     const float bound_pix_y = FFMIN(FFMAX(pix_y, 0), FFMAX(in->height - in_h, 0));
@@ -648,13 +641,15 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     const float subpix_x = decimal_part(bound_pix_x);
     const float subpix_y = decimal_part(bound_pix_y);
 //
+    printf("%.3f %.3f %.5f | %.3f x %.3f | %d x %d \n", bound_pix_x, bound_pix_y, zoom->zoom, in_w_f, in_h_f, in_w, in_h);
+
     ff_copy_rectangle_subpixel(&zoom->dc,
                                small_crop->data, small_crop->linesize,
                                in->data, in->linesize,
                                0, 0,
                                bound_pix_x, bound_pix_y,
-                               in_w, in_h,
-                               subpix_x, subpix_y);
+                               in_w, in_h);//,
+//                               subpix_x, subpix_y);
 
     // stretching bottom right
     av_opt_set_int(zoom->sws, "srcw", in_w, 0);
