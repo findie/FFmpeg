@@ -489,12 +489,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     const int out_w = outlink->w;
     const int out_h = outlink->h;
 
-    out = ff_get_video_buffer(outlink, out_w, out_h);
-    if (!out) {
-        av_frame_free(&in);
-        return AVERROR(ENOMEM);
-    }
-    av_frame_copy_props(out, in);
 
     // eval T (time)
     zoom->var_values[VAR_T] = in->pts == AV_NOPTS_VALUE ?
@@ -542,16 +536,46 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
 
 
+    if(zoom_val == 1) {
+        if((ret = av_frame_make_writable(in)) < 0){
+           goto error;
+        }
+        out = in;
+    } else {
+        out = ff_get_video_buffer(outlink, out_w, out_h);
+        if (!out) {
+            av_frame_free(&in);
+            return AVERROR(ENOMEM);
+        }
+        av_frame_copy_props(out, in);
+    }
+
     // scale
     if(zoom_val == 1) {
-        // it's 1, just copy
-        ff_copy_rectangle2(&zoom->dc,
-                           out->data, out->linesize,
-                           in->data, in->linesize,
-                           0, 0,
-                           av_clip_c(in_w * zoom->x - out_w / 2.0, 0, in_w - out_w),
-                           av_clip_c(in_h * zoom->y - out_h / 2.0, 0, in_h - out_h),
-                           out_w, out_h);
+        // it's 1, just a ref
+
+        out->width = out_w;
+        out->height = out_h;
+        int x = av_clip_c(in_w * zoom->x - out_w / 2.0, 0, in_w - out_w);
+        int y = av_clip_c(in_h * zoom->y - out_h / 2.0, 0, in_h - out_h);
+
+        out->data[0] += y * out->linesize[0];
+        out->data[0] += x * zoom->desc->comp[0].step;
+
+        if (!(zoom->desc->flags & AV_PIX_FMT_FLAG_PAL || zoom->desc->flags & FF_PSEUDOPAL)) {
+            for (int i = 1; i < 3; i ++) {
+                if (out->data[i]) {
+                    out->data[i] += (y >> zoom->desc->log2_chroma_h) * out->linesize[i];
+                    out->data[i] += (x >> zoom->desc->log2_chroma_w) * zoom->desc->comp[i].step;
+                }
+            }
+        }
+
+        /* alpha plane */
+        if (out->data[3]) {
+            out->data[3] += y * out->linesize[3];
+            out->data[3] += x * zoom->desc->comp[3].step;
+        }
     } else if (zoom_val <= 0) {
         // if it's 0 or lower do nothing
         // noop
@@ -566,17 +590,21 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         if(ret)
             goto error;
     } else if (zoom_val > 1){
-        // zoom in (1, +ing)
+        // zoom in (1, +inf)
         ret = zoom_in(zoom, in, out, outlink);
         if(ret)
             goto error;
     }
 
-    av_frame_free(&in);
+    if(in != out) {
+        av_frame_free(&in);
+    }
     return ff_filter_frame(outlink, out);
 
 error:
-    av_frame_free(&out);
+    if(out) {
+        av_frame_free(&out);
+    }
     return ret;
 }
 
