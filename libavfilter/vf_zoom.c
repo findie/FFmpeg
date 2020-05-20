@@ -536,20 +536,15 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_log(zoom, AV_LOG_WARNING, "x position %.2f is out of range of [0-1]\n", zoom->x);
         zoom->x = av_clipd_c(zoom->x, 0, 1);
     }
-		if(zoom->y < 0 || zoom->y > 1){
-				av_log(zoom, AV_LOG_WARNING, "y position %.2f is out of range of [0-1]\n", zoom->y);
+    if(zoom->y < 0 || zoom->y > 1){
+        av_log(zoom, AV_LOG_WARNING, "y position %.2f is out of range of [0-1]\n", zoom->y);
         zoom->y = av_clipd_c(zoom->y, 0, 1);
-		}
-    // copy in the background
-    ff_fill_rectangle(&zoom->dc, &zoom->fillcolor,
-                      out->data, out->linesize,
-                      0, 0,
-                      out_w, out_h);
+    }
+
 
     // scale
     if(zoom_val == 1) {
         // it's 1, just copy
-        // quite an expensive noop :D
         ff_copy_rectangle2(&zoom->dc,
                            out->data, out->linesize,
                            in->data, in->linesize,
@@ -561,6 +556,11 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         // if it's 0 or lower do nothing
         // noop
     } else if (zoom_val < 1) {
+        // fill in the background
+        ff_fill_rectangle(&zoom->dc, &zoom->fillcolor,
+                          out->data, out->linesize,
+                          0, 0,
+                          out_w, out_h);
         // zoom in (0, 1)
         ret = zoom_out(zoom, in, out, outlink);
         if(ret)
