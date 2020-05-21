@@ -439,11 +439,17 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "planes: %d\n", zoom->nb_planes);
     av_log(zoom, AV_LOG_DEBUG, "components: %d\n", zoom->nb_components);
 
-    // cutoff top left
-    px[1] = px[2] = AV_CEIL_RSHIFT(dx, chroma_w);
-    //                    support for yuv*, rgb*, etc... (any components & planes)
-    px[0] = px[3] = dx * (1.0 * zoom->nb_components / zoom->nb_planes);
+    // data cutoffs - left (with step support for 10/12/16bit color spaces)
+    px[0] = dx * zoom->desc->comp[0].step;
 
+    // chroma
+    px[1] = AV_CEIL_RSHIFT(dx, chroma_w) * zoom->desc->comp[1].step;
+    px[2] = AV_CEIL_RSHIFT(dx, chroma_w) * zoom->desc->comp[2].step;
+
+    // alpha
+    px[3] = dx * zoom->desc->comp[3].step;
+
+    // data cutoff - top
     py[1] = py[2] = AV_CEIL_RSHIFT(dy, chroma_h);
     py[0] = py[3] = dy;
 
