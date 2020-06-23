@@ -889,7 +889,7 @@ static int vc1_decode_i_block_adv(VC1Context *v, int16_t block[64], int n,
                 q2 = FFABS(q2) * 2 + ((q2 < 0) ? 0 : v->halfpq) - 1;
             if (q2 && q1 != q2) {
                 for (k = 1; k < 8; k++)
-                    ac_val2[k] = (ac_val2[k] * q2 * ff_vc1_dqscale[q1 - 1] + 0x20000) >> 18;
+                    ac_val2[k] = (int)(ac_val2[k] * q2 * (unsigned)ff_vc1_dqscale[q1 - 1] + 0x20000) >> 18;
             }
             for (k = 1; k < 8; k++) {
                 block[k << sh] = ac_val2[k] * scale;
@@ -1036,10 +1036,10 @@ static int vc1_decode_intra_block(VC1Context *v, int16_t block[64], int n,
             if (q2 && q1 != q2) {
                 if (dc_pred_dir) { // left
                     for (k = 1; k < 8; k++)
-                        block[k << v->left_blk_sh] += (ac_val[k] * q2 * ff_vc1_dqscale[q1 - 1] + 0x20000) >> 18;
+                        block[k << v->left_blk_sh] += (int)(ac_val[k] * q2 * (unsigned)ff_vc1_dqscale[q1 - 1] + 0x20000) >> 18;
                 } else { //top
                     for (k = 1; k < 8; k++)
-                        block[k << v->top_blk_sh] += (ac_val[k + 8] * q2 * ff_vc1_dqscale[q1 - 1] + 0x20000) >> 18;
+                        block[k << v->top_blk_sh] += (int)(ac_val[k + 8] * q2 * (unsigned)ff_vc1_dqscale[q1 - 1] + 0x20000) >> 18;
                 }
             } else {
                 if (dc_pred_dir) { // left
@@ -2632,10 +2632,10 @@ static void vc1_decode_i_blocks(VC1Context *v)
             if (v->s.loop_filter)
                 ff_vc1_i_loop_filter(v);
 
-            if (get_bits_count(&s->gb) > v->bits) {
+            if (get_bits_left(&s->gb) < 0) {
                 ff_er_add_slice(&s->er, 0, 0, s->mb_x, s->mb_y, ER_MB_ERROR);
                 av_log(s->avctx, AV_LOG_ERROR, "Bits overconsumption: %i > %i\n",
-                       get_bits_count(&s->gb), v->bits);
+                       get_bits_count(&s->gb), s->gb.size_in_bits);
                 return;
             }
 
@@ -2778,11 +2778,11 @@ static int vc1_decode_i_blocks_adv(VC1Context *v)
             if (v->s.loop_filter)
                 ff_vc1_i_loop_filter(v);
 
-            if (get_bits_count(&s->gb) > v->bits) {
+            if (get_bits_left(&s->gb) < 0) {
                 // TODO: may need modification to handle slice coding
                 ff_er_add_slice(&s->er, 0, s->start_mb_y, s->mb_x, s->mb_y, ER_MB_ERROR);
                 av_log(s->avctx, AV_LOG_ERROR, "Bits overconsumption: %i > %i\n",
-                       get_bits_count(&s->gb), v->bits);
+                       get_bits_count(&s->gb), s->gb.size_in_bits);
                 return 0;
             }
             inc_blk_idx(v->topleft_blk_idx);
@@ -2862,11 +2862,11 @@ static void vc1_decode_p_blocks(VC1Context *v)
                 if (apply_loop_filter)
                     ff_vc1_p_loop_filter(v);
             }
-            if (get_bits_count(&s->gb) > v->bits || get_bits_count(&s->gb) < 0) {
+            if (get_bits_left(&s->gb) < 0 || get_bits_count(&s->gb) < 0) {
                 // TODO: may need modification to handle slice coding
                 ff_er_add_slice(&s->er, 0, s->start_mb_y, s->mb_x, s->mb_y, ER_MB_ERROR);
                 av_log(s->avctx, AV_LOG_ERROR, "Bits overconsumption: %i > %i at %ix%i\n",
-                       get_bits_count(&s->gb), v->bits, s->mb_x, s->mb_y);
+                       get_bits_count(&s->gb), s->gb.size_in_bits, s->mb_x, s->mb_y);
                 return;
             }
             inc_blk_idx(v->topleft_blk_idx);
@@ -2951,11 +2951,11 @@ static void vc1_decode_b_blocks(VC1Context *v)
                 if (v->s.loop_filter)
                     ff_vc1_i_loop_filter(v);
             }
-            if (get_bits_count(&s->gb) > v->bits || get_bits_count(&s->gb) < 0) {
+            if (get_bits_left(&s->gb) < 0 || get_bits_count(&s->gb) < 0) {
                 // TODO: may need modification to handle slice coding
                 ff_er_add_slice(&s->er, 0, s->start_mb_y, s->mb_x, s->mb_y, ER_MB_ERROR);
                 av_log(s->avctx, AV_LOG_ERROR, "Bits overconsumption: %i > %i at %ix%i\n",
-                       get_bits_count(&s->gb), v->bits, s->mb_x, s->mb_y);
+                       get_bits_count(&s->gb), s->gb.size_in_bits, s->mb_x, s->mb_y);
                 return;
             }
         }

@@ -42,7 +42,7 @@ typedef struct librav1eContext {
     size_t pass_pos;
     int pass_size;
 
-    char *rav1e_opts;
+    AVDictionary *rav1e_opts;
     int quantizer;
     int speed;
     int tiles;
@@ -186,10 +186,27 @@ static av_cold int librav1e_encode_init(AVCodecContext *avctx)
         return AVERROR_EXTERNAL;
     }
 
-    rav1e_config_set_time_base(cfg, (RaRational) {
-                               avctx->time_base.num * avctx->ticks_per_frame,
-                               avctx->time_base.den
-                               });
+    /*
+     * Rav1e currently uses the time base given to it only for ratecontrol... where
+     * the inverse is taken and used as a framerate. So, do what we do in other wrappers
+     * and use the framerate if we can.
+     */
+    if (avctx->framerate.num > 0 && avctx->framerate.den > 0) {
+        rav1e_config_set_time_base(cfg, (RaRational) {
+                                   avctx->framerate.den, avctx->framerate.num
+                                   });
+    } else {
+        rav1e_config_set_time_base(cfg, (RaRational) {
+                                   avctx->time_base.num * avctx->ticks_per_frame,
+                                   avctx->time_base.den
+                                   });
+    }
+
+    if ((avctx->flags & AV_CODEC_FLAG_PASS1 || avctx->flags & AV_CODEC_FLAG_PASS2) && !avctx->bit_rate) {
+        av_log(avctx, AV_LOG_ERROR, "A bitrate must be set to use two pass mode.\n");
+        ret = AVERROR_INVALIDDATA;
+        goto end;
+    }
 
     if (avctx->flags & AV_CODEC_FLAG_PASS2) {
         if (!avctx->stats_in) {
@@ -244,17 +261,12 @@ static av_cold int librav1e_encode_init(AVCodecContext *avctx)
          }
     }
 
-    if (ctx->rav1e_opts) {
-        AVDictionary *dict    = NULL;
+    {
         AVDictionaryEntry *en = NULL;
-
-        if (!av_dict_parse_string(&dict, ctx->rav1e_opts, "=", ":", 0)) {
-            while (en = av_dict_get(dict, "", en, AV_DICT_IGNORE_SUFFIX)) {
-                int parse_ret = rav1e_config_parse(cfg, en->key, en->value);
-                if (parse_ret < 0)
-                    av_log(avctx, AV_LOG_WARNING, "Invalid value for %s: %s.\n", en->key, en->value);
-            }
-            av_dict_free(&dict);
+        while ((en = av_dict_get(ctx->rav1e_opts, "", en, AV_DICT_IGNORE_SUFFIX))) {
+            int parse_ret = rav1e_config_parse(cfg, en->key, en->value);
+            if (parse_ret < 0)
+                av_log(avctx, AV_LOG_WARNING, "Invalid value for %s: %s.\n", en->key, en->value);
         }
     }
 
@@ -538,7 +550,7 @@ static const AVOption options[] = {
     { "tiles", "number of tiles encode with", OFFSET(tiles), AV_OPT_TYPE_INT, { .i64 = 0 }, -1, INT64_MAX, VE },
     { "tile-rows", "number of tiles rows to encode with", OFFSET(tile_rows), AV_OPT_TYPE_INT, { .i64 = 0 }, -1, INT64_MAX, VE },
     { "tile-columns", "number of tiles columns to encode with", OFFSET(tile_cols), AV_OPT_TYPE_INT, { .i64 = 0 }, -1, INT64_MAX, VE },
-    { "rav1e-params", "set the rav1e configuration using a :-separated list of key=value parameters", OFFSET(rav1e_opts), AV_OPT_TYPE_STRING, { 0 }, 0, 0, VE },
+    { "rav1e-params", "set the rav1e configuration using a :-separated list of key=value parameters", OFFSET(rav1e_opts), AV_OPT_TYPE_DICT, { 0 }, 0, 0, VE },
     { NULL }
 };
 
