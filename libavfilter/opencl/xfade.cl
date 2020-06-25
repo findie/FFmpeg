@@ -101,11 +101,12 @@ void slide(__write_only image2d_t dst,
     int2 pi = (int2)(progress * w, progress * h);
     int2 p = uv + pi * direction;
     int2 f = p % wh;
+    float a = (p.y >= 0) * (h > p.y) * (p.x >= 0) * (w > p.x);
 
     f = f + (int2)(w, h) * (int2)(f.x < 0, f.y < 0);
     float4 val1 = read_imagef(src1, sampler, f);
     float4 val2 = read_imagef(src2, sampler, f);
-    write_imagef(dst, uv, mix(val1, val2, (p.y >= 0) * (h > p.y) * (p.x >= 0) * (w > p.x)));
+    write_imagef(dst, uv, mix(val1, val2, a));
 }
 
 __kernel void slidedown(__write_only image2d_t dst,
