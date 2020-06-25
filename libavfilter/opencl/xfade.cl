@@ -22,7 +22,7 @@ const sampler_t sampler = (CLK_NORMALIZED_COORDS_FALSE |
 __kernel void fade(__write_only image2d_t dst,
                    __read_only  image2d_t src1,
                    __read_only  image2d_t src2,
-                   float progress)
+                   float progress, int plane)
 {
     int2  p = (int2)(get_global_id(0), get_global_id(1));
 
@@ -35,7 +35,7 @@ __kernel void fade(__write_only image2d_t dst,
 __kernel void wipeleft(__write_only image2d_t dst,
                        __read_only  image2d_t src1,
                        __read_only  image2d_t src2,
-                       float progress)
+                       float progress, int plane)
 {
     int   s = (int)(get_image_dim(src1).x * progress);
     int2  p = (int2)(get_global_id(0), get_global_id(1));
@@ -49,7 +49,7 @@ __kernel void wipeleft(__write_only image2d_t dst,
 __kernel void wiperight(__write_only image2d_t dst,
                         __read_only  image2d_t src1,
                         __read_only  image2d_t src2,
-                        float progress)
+                        float progress, int plane)
 {
     int   s = (int)(get_image_dim(src1).x * (1.f - progress));
     int2  p = (int2)(get_global_id(0), get_global_id(1));
@@ -63,7 +63,7 @@ __kernel void wiperight(__write_only image2d_t dst,
 __kernel void wipeup(__write_only image2d_t dst,
                      __read_only  image2d_t src1,
                      __read_only  image2d_t src2,
-                     float progress)
+                     float progress, int plane)
 {
     int   s = (int)(get_image_dim(src1).y * progress);
     int2  p = (int2)(get_global_id(0), get_global_id(1));
@@ -77,7 +77,7 @@ __kernel void wipeup(__write_only image2d_t dst,
 __kernel void wipedown(__write_only image2d_t dst,
                        __read_only  image2d_t src1,
                        __read_only  image2d_t src2,
-                       float progress)
+                       float progress, int plane)
 {
     int   s = (int)(get_image_dim(src1).y * (1.f - progress));
     int2  p = (int2)(get_global_id(0), get_global_id(1));
@@ -112,7 +112,7 @@ void slide(__write_only image2d_t dst,
 __kernel void slidedown(__write_only image2d_t dst,
                         __read_only  image2d_t src1,
                         __read_only  image2d_t src2,
-                        float progress)
+                        float progress, int plane)
 {
     int2 direction = (int2)(0, 1);
     slide(dst, src1, src2, progress, direction);
@@ -121,7 +121,7 @@ __kernel void slidedown(__write_only image2d_t dst,
 __kernel void slideup(__write_only image2d_t dst,
                       __read_only  image2d_t src1,
                       __read_only  image2d_t src2,
-                      float progress)
+                      float progress, int plane)
 {
     int2 direction = (int2)(0, -1);
     slide(dst, src1, src2, progress, direction);
@@ -130,7 +130,7 @@ __kernel void slideup(__write_only image2d_t dst,
 __kernel void slideleft(__write_only image2d_t dst,
                         __read_only  image2d_t src1,
                         __read_only  image2d_t src2,
-                        float progress)
+                        float progress, int plane)
 {
     int2 direction = (int2)(-1, 0);
     slide(dst, src1, src2, progress, direction);
@@ -139,7 +139,7 @@ __kernel void slideleft(__write_only image2d_t dst,
 __kernel void slideright(__write_only image2d_t dst,
                          __read_only  image2d_t src1,
                          __read_only  image2d_t src2,
-                         float progress)
+                         float progress, int plane)
 {
     int2 direction = (int2)(1, 0);
     slide(dst, src1, src2, progress, direction);

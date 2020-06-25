@@ -184,6 +184,9 @@ static int xfade_frame(AVFilterContext *avctx, AVFrame *a, AVFrame *b)
         CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_float, &progress);
         kernel_arg++;
 
+        CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_int, &plane);
+        kernel_arg++;
+
         err = ff_opencl_filter_work_size_from_image(avctx, global_work,
                                                     output, plane, 0);
         if (err < 0)
