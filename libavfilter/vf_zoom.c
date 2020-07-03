@@ -628,9 +628,9 @@ static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out, FFDrawColor *fi
     const float2 UNCLAMPED_PAN  = {s->x, s->y};
           float2 PAN            = clamp_pan_inbounds(UNCLAMPED_PAN, dim_out_full, ZOOM, dim_in_full);
 
-    printf("ZOOM %.3f\n", ZOOM);
-    printf("UNCLAMPED_PAN x %.3f y %.3f\n", UNCLAMPED_PAN.x, UNCLAMPED_PAN.y);
-    printf("PAN x %.3f y %.3f\n", PAN.x, PAN.y);
+    av_log(s, AV_LOG_DEBUG, "ZOOM %.3f\n", ZOOM);
+    av_log(s, AV_LOG_DEBUG, "UNCLAMPED_PAN x %.3f y %.3f\n", UNCLAMPED_PAN.x, UNCLAMPED_PAN.y);
+    av_log(s, AV_LOG_DEBUG, "PAN x %.3f y %.3f\n", PAN.x, PAN.y);
 
     for(plane = 0; plane < desc->nb_components; plane++){
         float2 dim_in  = plane == 1 || plane == 2 ? dim_in_chroma  : dim_in_full;
