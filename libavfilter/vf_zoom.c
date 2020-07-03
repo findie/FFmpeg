@@ -370,7 +370,7 @@ static inline uint8_t *pointer_at(const FFDrawContext *draw, uint8_t *data[], in
 }
 
 
-// this function takes x/y already scaled to the chrome sub
+// this function takes x/y already scaled to the chroma sub
 // supports only planar formats
 static inline uint8_t sample8_bilinear_at(uint8_t *data,
                                           int linesize, int pixelstep,
@@ -412,6 +412,51 @@ static inline uint8_t sample8_bilinear_at(uint8_t *data,
     // vertical interp
     return ifracy * lin0 + fracy * lin1;
 }
+
+
+// this function takes x/y already scaled to the chroma sub
+// supports only planar formats
+static inline uint16_t sample16_bilinear_at(uint8_t *data,
+                                            int linesize, int pixelstep,
+                                            float x, float y,
+                                            int w, int h,
+                                            int16_t oob_value
+                                            )
+{
+    int ix = x;
+    int iy = y;
+    float fracx = x - ix;
+    float fracy = y - iy;
+    float ifracx = 1.0f - fracx;
+    float ifracy = 1.0f - fracy;
+    float lin0, lin1;
+
+    // check if requested value is out of bounds
+    if(x < 0 || y < 0 || x > w - 1 || y > h - 1){
+        return oob_value;
+    }
+
+    uint8_t *row_y = data + iy * linesize;
+
+    // top left
+    uint8_t *a11 = row_y + ix * pixelstep;
+    // top right = top left + 1px
+    uint8_t *a12 = a11 + pixelstep;
+
+    // bottom left = top left + 1row
+    uint8_t *a21 = a11 + linesize;
+    // bottom right = bottom left + 1px
+    uint8_t *a22 = a21 + pixelstep;
+
+    // top interp
+    lin0 = ifracx * (*((uint16_t*)a11)) + fracx * (*((uint16_t*)a12));
+    // bottom interp
+    lin1 = ifracx * (*((uint16_t*)a21)) + fracx * (*((uint16_t*)a22));
+
+    // vertical interp
+    return ifracy * lin0 + fracy * lin1;
+}
+
 
 typedef struct float2 {
     float x, y;
@@ -522,12 +567,13 @@ static inline float2 clamp_pan_inbounds(float2 PAN, float2 dim_out, float ZOOM, 
 
 
 static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
-                             int in_pix_step,
-                             int out_pix_step,
+                             int pix_step,
+                             int pix_depth,
                              uint8_t *in, int linesize_in,
                              uint8_t *out, int linesize_out,
                              float2 dim_in,
-                             float2 dim_out) {
+                             float2 dim_out,
+                             FFDrawColor *fillcolor) {
     int x, y;
 
     int h = dim_out.y;
@@ -542,20 +588,39 @@ static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
                 dim_in,
                 PAN
             );
-            int8_t value = sample8_bilinear_at(
-                in,
-                linesize_in,
-                in_pix_step,
-                src_location.x, src_location.y,
-                dim_in.x, dim_in.y,
-                255 // out of bounds value
-            );
 
-            int8_t *dst_pixel = out +
-                                y * linesize_out +
-                                x * out_pix_step;
+            if (pix_depth == 8) {
+                int8_t value = sample8_bilinear_at(
+                    in,
+                    linesize_in,
+                    pix_step,
+                    src_location.x, src_location.y,
+                    dim_in.x, dim_in.y,
+                    fillcolor->comp[plane].u8[0] // out of bounds value
+                );
 
-            (*dst_pixel) = value;
+                int8_t *dst_pixel = out +
+                                    y * linesize_out +
+                                    x * pix_step;
+
+                (*dst_pixel) = value;
+            }
+            else {
+                int16_t value = sample16_bilinear_at(
+                                    in,
+                                    linesize_in,
+                                    pix_step,
+                                    src_location.x, src_location.y,
+                                    dim_in.x, dim_in.y,
+                                    fillcolor->comp[plane].u16[0] // out of bounds value
+                                );
+
+                int16_t *dst_pixel = out +
+                                     y * linesize_out +
+                                     x * pix_step;
+
+                (*dst_pixel) = value;
+            }
         }
     }
 
@@ -563,7 +628,7 @@ static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
 }
 
 
-static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out){
+static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out, FFDrawColor *fillcolor){
     int x, y, plane;
 
     int out_w = out->width;
@@ -596,12 +661,13 @@ static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out){
         float2 dim_out = plane == 1 || plane == 2 ? dim_out_chroma : dim_out_full;
 
         apply_zoom_plane(ZOOM, PAN, plane,
-                         desc->comp[plane].step, // in pix step
-                         desc->comp[plane].step, // out pix step
+                         desc->comp[plane].step,
+                         desc->comp[plane].depth,
                          in->data[plane], in->linesize[plane],
                          out->data[plane], out->linesize[plane],
                          dim_in,
-                         dim_out);
+                         dim_out,
+                         fillcolor);
     }
 
     return 0;
@@ -980,7 +1046,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                       0, 0,
                       out_w, out_h);
 
-	apply_zoom(zoom, in, out);
+	apply_zoom(zoom, in, out, &zoom->fillcolor);
 
     // scale
 //    if(zoom_val == 1) {
