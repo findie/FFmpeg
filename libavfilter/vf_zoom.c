@@ -88,10 +88,6 @@ typedef struct ZoomContext {
     int hsub, vsub;
 } ZoomContext;
 
-#define SUBPIXEL_LUT_RESOLUTION 1000
-int  subpixel_LUT_inited = 0;
-char subpixel_LUT[256][256][SUBPIXEL_LUT_RESOLUTION];
-
 enum {
     FAST_BILINEAR   = SWS_FAST_BILINEAR,
     BILINEAR        = SWS_BILINEAR,
@@ -137,21 +133,6 @@ AVFILTER_DEFINE_CLASS(zoom);
 
 static av_cold int init(AVFilterContext *ctx)
 {
-
-    if(!subpixel_LUT_inited){
-        subpixel_LUT_inited = 1;
-
-        for(int i = 0; i < 256; i++) {
-            for(int j = 0; j < 256; j++) {
-                for(int k = 0; k < SUBPIXEL_LUT_RESOLUTION; k++) {
-                    subpixel_LUT[i][j][k] = i *      k / (float)SUBPIXEL_LUT_RESOLUTION +
-                                            j * (1 - k / (float)SUBPIXEL_LUT_RESOLUTION);
-                }
-            }
-        }
-
-    }
-
     return 0;
 }
 
@@ -349,26 +330,6 @@ static AVFrame* alloc_frame(enum AVPixelFormat pixfmt, int w, int h)
 
     return frame;
 }
-
-static inline int normalize_xy(double d, int chroma_sub)
-{
-  if (isnan(d))
-    return INT_MAX;
-  return (int)d & ~((1 << chroma_sub) - 1);
-}
-
-static inline float decimal_part(float d){
-    return d - (int64_t)d;
-}
-
-static inline uint8_t *pointer_at(const FFDrawContext *draw, uint8_t *data[], int linesize[],
-                           int plane, int x, int y)
-{
-    return data[plane] +
-           (y >> draw->vsub[plane]) * linesize[plane] +
-           (x >> draw->hsub[plane]) * draw->pixelstep[plane];
-}
-
 
 // this function takes x/y already scaled to the chroma sub
 // supports only planar formats
@@ -579,8 +540,9 @@ static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
     int h = dim_out.y;
     int w = dim_out.x;
 
-    for(y = 0; y < h; y++){
-        for(x = 0; x < w; x++){
+    for(y = 0; y < h; y++) {
+        for(x = 0; x < w; x++) {
+
             float2 src_location = scale_coords_pxout_to_pxin(
                 (float2){(float)x, (float)y},
                 dim_out,
@@ -673,307 +635,6 @@ static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out, FFDrawColor *fi
     return 0;
 }
 
-#define intra_field_calc_8      ((uint8_t*)q)[x - pixel_step] = ((uint8_t*)p)[x] * sub_x + ((uint8_t*)p)[x - pixel_step] * inverted_sub_x
-#define intra_field_calc_8_opt  ((uint8_t*)q)[x - pixel_step] = subpixel_LUT[ ((uint8_t*)p)[x] ]                    \
-                                                                        [ ((uint8_t*)p)[x - pixel_step] ]       \
-                                                                        [ subpix_x_bucket ]
-
-#define intra_field_calc_16 ((uint16_t*)q)[x - pixel_step] = ((uint16_t*)p)[x] * sub_x + ((uint16_t*)p)[x - pixel_step] * inverted_sub_x
-#define intra_field_calc_16_disabled ((uint16_t*)q)[x - pixel_step] = ((uint16_t*)p)[x - pixel_step]
-
-#define intra_field_copy_8  ((uint8_t*)q)[x] = ((uint8_t*)p)[x]
-#define intra_field_copy_16 ((uint16_t*)q)[x] = ((uint16_t*)p)[x]
-
-#define inter_field_calc_8      ((uint8_t*)q_)[x] = ((uint8_t*)q)[x] * sub_y + ((uint8_t*)q_)[x] * inverted_sub_y
-#define inter_field_calc_8_opt  ((uint8_t*)q_)[x] = subpixel_LUT[ ((uint8_t*)q)[x] ] \
-                                                            [ ((uint8_t*)q_)[x] ] \
-                                                            [ subpix_y_bucket ]
-
-#define inter_field_calc_16 ((uint16_t*)q_)[x] = ((uint16_t*)q)[x] * sub_y + ((uint16_t*)q_)[x] * inverted_sub_y
-#define inter_field_calc_16_disabled {}while(0)
-
-#define ff_copy_rectangle_subpixel_mapping(intra_calc, intra_copy, inter_calc) ({ \
-        for (y = 0; y < hp; y++) {                                                                      \
-\
-            for(x = pixel_step; x < copy_w; x ++) {                                          \
-                intra_calc;                                                                             \
-            }                                                                                           \
-\
-            /* fill in the last column of pixels */                                                     \
-            /* this should set the last pixel as the one before * inverted_sub_x + current one * sub_x */\
-            /* as it is right now, it generates a 1px pop-in effect on the last column */               \
-            for(x = copy_w - pixel_step; x < copy_w; x++){                                              \
-                intra_copy;                                                                             \
-            }                                                                                           \
-\
-            if(y > 0) {                                                                                 \
-                p_ = p - src_linesize[plane];                                                           \
-                q_ = q - dst_linesize[plane];                                                           \
-\
-                for(x = 0; x < copy_w; x ++){                                                           \
-                    inter_calc;                                                                         \
-                }                                                                                       \
-            }                                                                                           \
-\
-            p += src_linesize[plane];                                                                   \
-            q += dst_linesize[plane];                                                                   \
-        }                                                                                               \
-        /* todo: interpolate last row too like interpolating last column */                             \
-})
-
-static void ff_copy_rectangle_subpixel(FFDrawContext *draw,
-                                       uint8_t *dst[], int dst_linesize[],
-                                       uint8_t *src[], int src_linesize[],
-                                       int dst_x, int dst_y,
-                                       int src_x, int src_y,
-                                       int w, int h,
-                                       float original_sub_x, float original_sub_y)
-{
-
-    int plane, y, x, wp, hp;
-    int plane_step, copy_w, plane_depth, pixel_step;
-    uint8_t *p, *q, *p_, *q_;
-    uint8_t vsub, hsub;
-
-    float sub_x, sub_y;
-
-    float inverted_sub_x;
-    float inverted_sub_y;
-
-    uint16_t subpix_x_bucket = (sub_x * SUBPIXEL_LUT_RESOLUTION);
-    uint16_t subpix_y_bucket = (sub_y * SUBPIXEL_LUT_RESOLUTION);
-
-    for (plane = 0; plane < draw->nb_planes; plane++) {
-        p = pointer_at(draw, src, src_linesize, plane, src_x, src_y);
-        q = pointer_at(draw, dst, dst_linesize, plane, dst_x, dst_y);
-        vsub = draw->vsub[plane];
-        hsub = draw->hsub[plane];
-        wp = AV_CEIL_RSHIFT(w, hsub) * draw->pixelstep[plane];
-        hp = AV_CEIL_RSHIFT(h, vsub);
-
-        plane_step = draw->desc->comp[plane].step;
-        plane_depth = draw->desc->comp[plane].depth;
-        pixel_step = plane_step / (plane_depth / 8);
-        copy_w = wp / (plane_depth / 8);
-
-        sub_x = decimal_part((src_x + original_sub_x) / (1 << vsub));
-        sub_y = decimal_part((src_y + original_sub_y) / (1 << hsub));
-
-        inverted_sub_x = 1 - sub_x;
-        inverted_sub_y = 1 - sub_y;
-
-        subpix_x_bucket = (sub_x * SUBPIXEL_LUT_RESOLUTION);
-        subpix_y_bucket = (sub_y * SUBPIXEL_LUT_RESOLUTION);
-
-        if(plane_depth == 8) {
-            ff_copy_rectangle_subpixel_mapping(intra_field_calc_8_opt,  intra_field_copy_8,  inter_field_calc_8_opt);
-        }else{
-            ff_copy_rectangle_subpixel_mapping(intra_field_calc_16, intra_field_copy_16, inter_field_calc_16 );
-        }
-
-    }
-}
-
-static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
-{
-    av_log(zoom, AV_LOG_DEBUG, "zoom out\n");
-
-    int ret = 0;
-    zoom->sws = sws_alloc_context();
-    if (!zoom->sws) {
-        ret = AVERROR(ENOMEM);
-        goto error;
-    }
-
-    const double zoom_val = zoom->zoom;
-
-    const int in_w  = in->width;
-    const int in_h  = in->height;
-    const int in_f  = in->format;
-
-          int out_w = in->width * zoom_val;
-          int out_h = in->height * zoom_val;
-    const int out_f = outlink->format;
-
-    const int fout_w = out->width;
-    const int fout_h = out->height;
-
-
-    const double originalAspectRatio = 1.0 * in_w / in_h;
-    const double aspectRatio = zoom->outAspectRatio;
-
-    const double x  = zoom->x;
-    const double y  = zoom->y;
-
-    if(out_h <= 0 || out_w <= 0)
-        goto bypass;
-
-    // todo there's surely a way to implement this without a temp frame
-    AVFrame* temp_frame = alloc_frame(out_f, out_w, out_h);
-    av_log(zoom, AV_LOG_DEBUG, "zoom: %.6f y: %.3f\n", zoom->zoom);
-    av_log(zoom, AV_LOG_DEBUG, "scaling: %dx%d -> %dx%d\n", in_w, in_h, out_w, out_h);
-
-    av_opt_set_int(zoom->sws, "srcw", in_w, 0);
-    av_opt_set_int(zoom->sws, "srch", in_h, 0);
-    av_opt_set_int(zoom->sws, "src_format", in_f, 0);
-    av_opt_set_int(zoom->sws, "dstw", out_w, 0);
-    av_opt_set_int(zoom->sws, "dsth", out_h, 0);
-    av_opt_set_int(zoom->sws, "dst_format", out_f, 0);
-
-    if(zoom->interpolation)
-        av_opt_set_int(zoom->sws, "sws_flags", zoom->interpolation, 0);
-
-    if ((ret = sws_init_context(zoom->sws, NULL, NULL)) < 0)
-        goto error;
-
-    sws_scale(zoom->sws, (const uint8_t *const *)&in->data, in->linesize, 0, in_h, temp_frame->data, temp_frame->linesize);
-
-    sws_freeContext(zoom->sws);
-    zoom->sws = NULL;
-
-    av_log(zoom, AV_LOG_DEBUG, "x: %.3f y: %.3f\n", x, y);
-    const int dx = FFMIN(FFMAX(fout_w * x - out_w/2, 0), FFMAX(fout_w - out_w, 0));
-    const int dy = FFMIN(FFMAX(fout_h * y - out_h/2, 0), FFMAX(fout_h - out_h, 0));
-    av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
-    av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
-
-    ff_copy_rectangle2(&zoom->dc,
-                       out->data, out->linesize,
-                       temp_frame->data, temp_frame->linesize,
-                       dx, dy, 0, 0,
-                       FFMIN(out_w, fout_w - dx),
-                       FFMIN(out_h, fout_h - dy));
-
-    av_frame_free(&temp_frame);
-
-error:
-    return ret;
-bypass:
-    return 0;
-}
-
-static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
-{
-    av_log(zoom, AV_LOG_DEBUG, "zoom in\n");
-
-    int ret = 0;
-    zoom->sws = sws_alloc_context();
-    if (!zoom->sws) {
-        ret = AVERROR(ENOMEM);
-        goto error;
-    }
-
-    const double zoom_val = zoom->zoom;
-
-        float in_w_f = in->width / zoom_val;
-        float in_h_f = in->height / zoom_val;
-
-          int in_w  = in_w_f;
-          int in_h  = in_h_f;
-    const int in_f  = in->format;
-
-    const double originalAspectRatio = 1.0 * in_w_f / in_h_f;
-    const double aspectRatio = zoom->outAspectRatio;
-
-    if(originalAspectRatio < aspectRatio){
-      in_h_f = in_h_f * (originalAspectRatio / aspectRatio);
-      in_h = round(in_h_f);
-    }else{
-      in_w_f = in_w_f * (aspectRatio / originalAspectRatio);
-      in_w = round(in_w_f);
-    }
-
-    const int out_w = out->width;
-    const int out_h = out->height;
-    const int out_f = outlink->format;
-
-    const double x  = zoom->x;
-    const double y  = zoom->y;
-
-    if(out_h <= 0 || out_w <= 0)
-        goto bypass;
-
-    av_log(zoom, AV_LOG_DEBUG, "original in_w: %d in_h: %d\n", in->width, in->height);
-    av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
-    av_log(zoom, AV_LOG_DEBUG, "out_w: %d out_h: %d\n", out_w, out_h);
-
-    const double pix_x = in->width * x - in_w_f / 2.0;
-    const double pix_y = in->height * y - in_h_f / 2.0;
-
-    const int dx = normalize_xy(
-        FFMIN(FFMAX(pix_x, 0), FFMAX(in->width - in_w, 0)),
-        zoom->hsub);
-    const int dy = normalize_xy(
-        FFMIN(FFMAX(pix_y, 0), FFMAX(in->height - in_h, 0)),
-        zoom->vsub);
-
-    av_log(zoom, AV_LOG_DEBUG, "x: %0.3f y: %0.3f\n", x, y);
-    av_log(zoom, AV_LOG_DEBUG, "pix_x: %.3f pix_y: %.3f\n", pix_x, pix_y);
-    av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
-
-    AVFrame* small_crop = alloc_frame(in->format, in_w, in_h);
-    if (!small_crop) {
-        ret = AVERROR(ENOMEM);
-        goto error;
-    }
-
-    // fixme: there is an issue here when zooming in/out slowly
-    // the size changes and due to the scaling up being to the same values, the top/left jitters
-    //
-    // battle plan:
-    // 1. find the crop area (x, y, w and h according to new AR)
-    // 2. expand it by vsub/hsub px top/bottom/left/right where possible
-    // 3. crop with expanded area
-    // 4. scale up by zoom amount (use old zoom_in code from https://github.com/findie/FFmpeg/blob/190eaf3c027d1a343ac2b357d66a308191a3b448/libavfilter/vf_zoom.c#L417-L469)
-    // 5. calculate the new padding size (vsub/hsub * zoom)
-    // 6. use ff_copy_rectangle_subpixel to get the subpixel copy of the actual window
-    // 7. use that as final image
-
-    const float bound_pix_x = FFMIN(FFMAX(pix_x, 0), FFMAX(in->width - in_w, 0));
-    const float bound_pix_y = FFMIN(FFMAX(pix_y, 0), FFMAX(in->height - in_h, 0));
-
-    const float subpix_x = decimal_part(bound_pix_x);
-    const float subpix_y = decimal_part(bound_pix_y);
-//
-    printf("%.3f %.3f %.5f | %.3f x %.3f | %d x %d \n", bound_pix_x, bound_pix_y, zoom->zoom, in_w_f, in_h_f, in_w, in_h);
-
-    ff_copy_rectangle_subpixel(&zoom->dc,
-                               small_crop->data, small_crop->linesize,
-                               in->data, in->linesize,
-                               0, 0,
-                               bound_pix_x, bound_pix_y,
-                               in_w, in_h,
-                               subpix_x, subpix_y);
-
-    // stretching bottom right
-    av_opt_set_int(zoom->sws, "srcw", in_w, 0);
-    av_opt_set_int(zoom->sws, "srch", in_h, 0);
-    av_opt_set_int(zoom->sws, "src_format", in_f, 0);
-    av_opt_set_int(zoom->sws, "dstw", out_w, 0);
-    av_opt_set_int(zoom->sws, "dsth", out_h, 0);
-    av_opt_set_int(zoom->sws, "dst_format", out_f, 0);
-    if(zoom->interpolation)
-        av_opt_set_int(zoom->sws, "sws_flags", zoom->interpolation, 0);
-
-    if ((ret = sws_init_context(zoom->sws, NULL, NULL)) < 0)
-        goto error;
-
-//    sws_scale(zoom->sws, (const uint8_t *const *)&input, in->linesize, 0, in_h, out->data, out->linesize);
-    sws_scale(zoom->sws,
-              small_crop->data, small_crop->linesize,
-              0, in_h,
-              out->data, out->linesize);
-
-    av_frame_free(&small_crop);
-    sws_freeContext(zoom->sws);
-    zoom->sws = NULL;
-
-    error:
-    return ret;
-    bypass:
-    return 0;
-}
-
 static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 {
     AVFilterContext *ctx = inlink->dst;
@@ -1047,39 +708,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                       out_w, out_h);
 
 	apply_zoom(zoom, in, out, &zoom->fillcolor);
-
-    // scale
-//    if(zoom_val == 1) {
-//        // it's 1, just copy
-//        // quite an expensive noop :D
-//
-//        int from_x = av_clip_c(in_w * zoom->x - out_w / 2.0, 0, in_w - out_w);
-//        int from_y = av_clip_c(in_h * zoom->y - out_h / 2.0, 0, in_h - out_h);
-//        float sub_x = decimal_part(av_clipf_c(in_w * zoom->x - out_w / 2.0, 0.0, in_w - out_w));
-//        float sub_y = decimal_part(av_clipf_c(in_h * zoom->y - out_h / 2.0, 0.0, in_h - out_h));
-//
-//        ff_copy_rectangle_subpixel(&zoom->dc,
-//                           out->data, out->linesize,
-//                           in->data, in->linesize,
-//                           0, 0,
-//                           from_x,
-//                           from_y,
-//                           out_w, out_h, sub_x, sub_y);
-//
-//    } else if (zoom_val <= 0) {
-//        // if it's 0 or lower do nothing
-//        // noop
-//    } else if (zoom_val < 1) {
-//        // zoom in (0, 1)
-//        ret = zoom_out(zoom, in, out, outlink);
-//        if(ret)
-//            goto error;
-//    } else if (zoom_val > 1){
-//        // zoom in (1, +ing)
-//        ret = zoom_in(zoom, in, out, outlink);
-//        if(ret)
-//            goto error;
-//    }
 
     av_frame_free(&in);
     return ff_filter_frame(outlink, out);
