@@ -148,8 +148,6 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YUVJ420P,
         AV_PIX_FMT_YUVJ422P,
         AV_PIX_FMT_YUVJ444P,
-        AV_PIX_FMT_NV12,
-        AV_PIX_FMT_NV21,
         AV_PIX_FMT_GRAY16LE,
         AV_PIX_FMT_YUV440P,
         AV_PIX_FMT_YUVJ440P,
@@ -165,13 +163,29 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YUVA420P16LE,
         AV_PIX_FMT_YUVA422P16LE,
         AV_PIX_FMT_YUVA444P16LE,
-        AV_PIX_FMT_NV16,
         AV_PIX_FMT_YA16LE,
         AV_PIX_FMT_GBRAP,
         AV_PIX_FMT_GBRAP16LE,
         AV_PIX_FMT_YUVJ411P,
-        AV_PIX_FMT_NV24,
-        AV_PIX_FMT_NV42,
+
+        // unsupported: planar Y but packed U & V
+        // AV_PIX_FMT_NV12,
+        // AV_PIX_FMT_NV21,
+        // AV_PIX_FMT_NV16,
+        // AV_PIX_FMT_NV24,
+        // AV_PIX_FMT_NV42
+
+        // unsupported: packed RGB & variants
+        // AV_PIX_FMT_RGB24,
+        // AV_PIX_FMT_BGR24,
+        // AV_PIX_FMT_ARGB,
+        // AV_PIX_FMT_RGBA,
+        // AV_PIX_FMT_ABGR,
+        // AV_PIX_FMT_BGRA,
+        // AV_PIX_FMT_0RGB,
+        // AV_PIX_FMT_RGB0,
+        // AV_PIX_FMT_0BGR,
+        // AV_PIX_FMT_BGR0,
 
         AV_PIX_FMT_NONE
     };
