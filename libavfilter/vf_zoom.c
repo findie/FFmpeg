@@ -131,8 +131,26 @@ static const AVOption zoom_options[] = {
 
 AVFILTER_DEFINE_CLASS(zoom);
 
+#define SUBPIXEL_LUT_RESOLUTION 100
+int     subpixel_LUT_inited = 0;
+uint8_t subpixel_LUT[256][256][SUBPIXEL_LUT_RESOLUTION];
+
 static av_cold int init(AVFilterContext *ctx)
 {
+    if(!subpixel_LUT_inited){
+        subpixel_LUT_inited = 1;
+
+        for(int i = 0; i < 256; i++) {
+            for(int j = 0; j < 256; j++) {
+                for(int k = 0; k < SUBPIXEL_LUT_RESOLUTION; k++) {
+                    subpixel_LUT[i][j][k] = i * (    k / (float)SUBPIXEL_LUT_RESOLUTION) +
+                                            j * (1 - (k / (float)SUBPIXEL_LUT_RESOLUTION));
+                }
+            }
+        }
+
+    }
+
     return 0;
 }
 
@@ -358,9 +376,12 @@ static inline uint8_t sample8_bilinear_at(uint8_t *data,
     int iy = y;
     float fracx = x - ix;
     float fracy = y - iy;
-    float ifracx = 1.0f - fracx;
-    float ifracy = 1.0f - fracy;
-    float lin0, lin1;
+    //float ifracx = 1.0f - fracx;
+    //float ifracy = 1.0f - fracy;
+    //float lin0, lin1;
+
+    int _fractx = fracx * SUBPIXEL_LUT_RESOLUTION;
+    int _fracty = fracy * SUBPIXEL_LUT_RESOLUTION;
 
     // check if requested value is out of bounds
     if(x < 0 || y < 0 || x > w - 1 || y > h - 1){
@@ -371,6 +392,7 @@ static inline uint8_t sample8_bilinear_at(uint8_t *data,
 
     // top left
     uint8_t *a11 = row_y + ix * pixelstep;
+
     // top right = top left + 1px
     uint8_t *a12 = a11 + pixelstep;
 
@@ -379,13 +401,18 @@ static inline uint8_t sample8_bilinear_at(uint8_t *data,
     // bottom right = bottom left + 1px
     uint8_t *a22 = a21 + pixelstep;
 
+    uint8_t l0 = subpixel_LUT[(*a11)][(*a12)][_fractx];
+    uint8_t l1 = subpixel_LUT[(*a21)][(*a22)][_fractx];
+
+    return subpixel_LUT[l0][l1][_fracty];
+
     // top interp
-    lin0 = ifracx * (*a11) + fracx * (*a12);
+    //lin0 = ifracx * (*a11) + fracx * (*a12);
     // bottom interp
-    lin1 = ifracx * (*a21) + fracx * (*a22);
+    //lin1 = ifracx * (*a21) + fracx * (*a22);
 
     // vertical interp
-    return ifracy * lin0 + fracy * lin1;
+    //return ifracy * lin0 + fracy * lin1;
 }
 
 
@@ -549,35 +576,60 @@ static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
                              float2 dim_in,
                              float2 dim_out,
                              FFDrawColor *fillcolor) {
-    int x, y;
+    float x, y;
+    int _x, _y;
 
     int h = dim_out.y;
     int w = dim_out.x;
 
-    for(y = 0; y < h; y++) {
-        for(x = 0; x < w; x++) {
+    // calculate origin, origin + (0, 1), origin + (1, 0)
+    float2 src_location_00 = scale_coords_pxout_to_pxin(
+        (float2){0.0f, 0.0f},
+        dim_out,
+        ZOOM,
+        dim_in,
+        PAN
+    );
+    float2 src_location_01 = scale_coords_pxout_to_pxin(
+        (float2){0.0f, 1.0f},
+        dim_out,
+        ZOOM,
+        dim_in,
+        PAN
+    );
+    float2 src_location_10 = scale_coords_pxout_to_pxin(
+        (float2){1.0f, 0.0f},
+        dim_out,
+        ZOOM,
+        dim_in,
+        PAN
+    );
 
-            float2 src_location = scale_coords_pxout_to_pxin(
-                (float2){(float)x, (float)y},
-                dim_out,
-                ZOOM,
-                dim_in,
-                PAN
-            );
+    // calculate deltas on X and Y
+    // to use to loop over frame space
+    // we can do this since out transformation is a simple liniar translation
+    float source_x = src_location_00.x;
+    float delta_x = src_location_10.x - src_location_00.x;
+
+    float source_y = src_location_00.y;
+    float delta_y = src_location_01.y - src_location_00.y;
+
+    for(y = source_y, _y = 0; _y < h; y+=delta_y, _y++) {
+        for(x = source_x, _x = 0; _x < w; x+=delta_x, _x++) {
 
             if (pix_depth == 8) {
                 int8_t value = sample8_bilinear_at(
                     in,
                     linesize_in,
                     pix_step,
-                    src_location.x, src_location.y,
+                    x, y,
                     dim_in.x, dim_in.y,
                     fillcolor->comp[plane].u8[0] // out of bounds value
                 );
 
                 int8_t *dst_pixel = out +
-                                    y * linesize_out +
-                                    x * pix_step;
+                                    _y * linesize_out +
+                                    _x * pix_step;
 
                 (*dst_pixel) = value;
             }
@@ -586,14 +638,14 @@ static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
                                     in,
                                     linesize_in,
                                     pix_step,
-                                    src_location.x, src_location.y,
+                                    x, y,
                                     dim_in.x, dim_in.y,
                                     fillcolor->comp[plane].u16[0] // out of bounds value
                                 );
 
                 int16_t *dst_pixel = out +
-                                     y * linesize_out +
-                                     x * pix_step;
+                                     _y * linesize_out +
+                                     _x * pix_step;
 
                 (*dst_pixel) = value;
             }
@@ -715,11 +767,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 		av_log(zoom, AV_LOG_WARNING, "y position %.2f is out of range of [0-1]\n", zoom->y);
 		zoom->y = av_clipd_c(zoom->y, 0, 1);
 	}
-    // copy in the background
-    ff_fill_rectangle(&zoom->dc, &zoom->fillcolor,
-                      out->data, out->linesize,
-                      0, 0,
-                      out_w, out_h);
 
 	apply_zoom(zoom, in, out, &zoom->fillcolor);
 
