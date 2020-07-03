@@ -159,8 +159,6 @@ static int query_formats(AVFilterContext *ctx)
 {
     static const enum AVPixelFormat pix_fmts[] = {
         AV_PIX_FMT_YUV420P,
-        AV_PIX_FMT_RGB24,
-        AV_PIX_FMT_BGR24,
         AV_PIX_FMT_YUV422P,
         AV_PIX_FMT_YUV444P,
         AV_PIX_FMT_YUV410P,
@@ -171,10 +169,6 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YUVJ444P,
         AV_PIX_FMT_NV12,
         AV_PIX_FMT_NV21,
-        AV_PIX_FMT_ARGB,
-        AV_PIX_FMT_RGBA,
-        AV_PIX_FMT_ABGR,
-        AV_PIX_FMT_BGRA,
         AV_PIX_FMT_GRAY16LE,
         AV_PIX_FMT_YUV440P,
         AV_PIX_FMT_YUVJ440P,
@@ -194,10 +188,6 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YA16LE,
         AV_PIX_FMT_GBRAP,
         AV_PIX_FMT_GBRAP16LE,
-        AV_PIX_FMT_0RGB,
-        AV_PIX_FMT_RGB0,
-        AV_PIX_FMT_0BGR,
-        AV_PIX_FMT_BGR0,
         AV_PIX_FMT_YUVJ411P,
         AV_PIX_FMT_NV24,
         AV_PIX_FMT_NV42,
@@ -371,12 +361,250 @@ static inline float decimal_part(float d){
     return d - (int64_t)d;
 }
 
-static inline uint8_t *pointer_at(FFDrawContext *draw, uint8_t *data[], int linesize[],
+static inline uint8_t *pointer_at(const FFDrawContext *draw, uint8_t *data[], int linesize[],
                            int plane, int x, int y)
 {
     return data[plane] +
            (y >> draw->vsub[plane]) * linesize[plane] +
            (x >> draw->hsub[plane]) * draw->pixelstep[plane];
+}
+
+
+// this function takes x/y already scaled to the chrome sub
+// supports only planar formats
+static inline uint8_t sample8_bilinear_at(uint8_t *data,
+                                          int linesize, int pixelstep,
+                                          float x, float y,
+                                          int w, int h,
+                                          int8_t oob_value
+                                          )
+{
+    int ix = x;
+    int iy = y;
+    float fracx = x - ix;
+    float fracy = y - iy;
+    float ifracx = 1.0f - fracx;
+    float ifracy = 1.0f - fracy;
+    float lin0, lin1;
+
+    // check if requested value is out of bounds
+    if(x < 0 || y < 0 || x > w - 1 || y > h - 1){
+        return oob_value;
+    }
+
+    uint8_t *row_y = data + iy * linesize;
+
+    // top left
+    uint8_t *a11 = row_y + ix * pixelstep;
+    // top right = top left + 1px
+    uint8_t *a12 = a11 + pixelstep;
+
+    // bottom left = top left + 1row
+    uint8_t *a21 = a11 + linesize;
+    // bottom right = bottom left + 1px
+    uint8_t *a22 = a21 + pixelstep;
+
+    // top interp
+    lin0 = ifracx * (*a11) + fracx * (*a12);
+    // bottom interp
+    lin1 = ifracx * (*a21) + fracx * (*a22);
+
+    // vertical interp
+    return ifracy * lin0 + fracy * lin1;
+}
+
+typedef struct float2 {
+    float x, y;
+} float2;
+
+static inline float2 scale_coords_pxout_to_pxin(float2 pix_out, float2 dim_out, float ZOOM, float2 dim_in, float2 PAN) {
+
+    float2 pix_in;
+
+    if (ZOOM < 1) {
+        //                                               canvas offset   obj scaled center offset   scaled px location
+        // px_out                                      = dim_out * PAN - dim_in / 2 * ZOOM        + px_in * ZOOM
+
+        // -dim_out * PAN + px_out                     = (-dim_in/2 + px_in) * ZOOM
+
+        // (-dim_out * PAN + px_out) / ZOOM            = -dim_in/2 + px_in
+
+        // (-dim_out * PAN + px_out) / ZOOM + dim_in/2 = px_in
+
+        pix_in.x = (-dim_out.x * PAN.x + pix_out.x) / ZOOM + dim_in.x / 2;
+        pix_in.y = (-dim_out.y * PAN.y + pix_out.y) / ZOOM + dim_in.y / 2;
+    }
+    // zoom >= 1
+    else {
+
+        pix_in.x = (pix_out.x - dim_out.x / 2.0f) / ZOOM + dim_in.x * PAN.x;
+        pix_in.y = (pix_out.y - dim_out.y / 2.0f) / ZOOM + dim_in.y * PAN.y;
+    }
+
+    return pix_in;
+}
+
+
+static inline float2 scale_coords_find_PAN(float2 pix_in, float2 pix_out, float2 dim_out, float ZOOM, float2 dim_in) {
+    float2 PAN;
+
+    if(ZOOM < 1){
+        // taken from scale_coords_pxout_to_pxin
+        // pix_in                                                = (-dim_out * PAN + pix_out) / ZOOM + dim_in / 2;
+        // pix_in - dim_in / 2                                   = (-dim_out * PAN + pix_out) / ZOOM
+        // (pix_in - dim_in / 2) * ZOOM                          = -dim_out * PAN + pix_out
+        // (pix_in - dim_in / 2) * ZOOM - pix_out                = -dim_out * PAN
+        // ((pix_in - dim_in / 2) * ZOOM - pix_out) / (-dim_out) = PAN
+
+        PAN.x = ((pix_in.x - dim_in.x / 2.0f) * ZOOM - pix_out.x) / (-dim_out.x);
+        PAN.y = ((pix_in.y - dim_in.y / 2.0f) * ZOOM - pix_out.y) / (-dim_out.y);
+    }
+    // zoom >= 1
+    else {
+        // taken from scale_coords_pxout_to_pxin
+        // pix_in                                           = (pix_out - dim_out/2) / ZOOM + dim_in * PAN
+        // pix_in - (pix_out - dim_out/2) / ZOOM            = dim_in * PAN
+        // (pix_in - (pix_out - dim_out/2) / ZOOM) / dim_in = PAN
+
+        PAN.x = (pix_in.x - (pix_out.x - dim_out.x / 2.0f) / ZOOM) / dim_in.x;
+        PAN.y = (pix_in.y - (pix_out.y - dim_out.y / 2.0f) / ZOOM) / dim_in.y;
+    }
+    return PAN;
+}
+
+static inline float clampf(float val, float min, float max) {
+    if(val < min) return min;
+    if(val > max) return max;
+    return val;
+}
+
+static inline float2 clamp_pan_inbounds(float2 PAN, float2 dim_out, float ZOOM, float2 dim_in) {
+
+    float2 adjusted_dim_in = {dim_in.x * ZOOM, dim_in.y * ZOOM};
+    
+    float2 top_left = scale_coords_find_PAN((float2){0.0f, 0.0f}, (float2){-1.0f, -1.0f}, dim_out, ZOOM, dim_in);
+    //float2 bottom_right = {1.0f - top_left.x, 1.0f - top_left.y};
+    float2 bottom_right = scale_coords_find_PAN((float2){ dim_in.x + 0.0f,  dim_in.y + 0.0f},
+                                                (float2){dim_out.x + ZOOM, dim_out.y + ZOOM},
+                                                dim_out, ZOOM, dim_in);
+
+    float2 CLAMPED_PAN = {0.0f, 0.0f};
+
+    if(ZOOM < 1) {
+        // if it fits
+        if(adjusted_dim_in.x <= dim_out.x && adjusted_dim_in.y <= dim_out.y) {
+            CLAMPED_PAN.x = clampf(PAN.x, top_left.x, bottom_right.x);
+            CLAMPED_PAN.y = clampf(PAN.y, top_left.y, bottom_right.y);
+        }
+            // if it doesn't fix
+        else {
+
+            CLAMPED_PAN.x = adjusted_dim_in.x > dim_out.x ?
+                            // doesn't fit on W
+                            FFMAX(FFMIN(1 - PAN.x, top_left.x), bottom_right.x):
+                            // fits on W
+                            FFMAX(FFMIN(PAN.y, bottom_right.x), top_left.x);
+            CLAMPED_PAN.y = adjusted_dim_in.y > dim_out.y ?
+                            // doesn't fit on W
+                            FFMAX(FFMIN(1 - PAN.y, top_left.y), bottom_right.y):
+                            // fits on W
+                            FFMAX(FFMIN(PAN.y, bottom_right.y), top_left.y);
+
+        }
+    } else {
+
+        CLAMPED_PAN.x = clampf(PAN.x, top_left.x, bottom_right.x);
+        CLAMPED_PAN.y = clampf(PAN.y, top_left.y, bottom_right.y);
+    }
+
+    return CLAMPED_PAN;
+}
+
+
+static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
+                             int in_pix_step,
+                             int out_pix_step,
+                             uint8_t *in, int linesize_in,
+                             uint8_t *out, int linesize_out,
+                             float2 dim_in,
+                             float2 dim_out) {
+    int x, y;
+
+    int h = dim_out.y;
+    int w = dim_out.x;
+
+    for(y = 0; y < h; y++){
+        for(x = 0; x < w; x++){
+            float2 src_location = scale_coords_pxout_to_pxin(
+                (float2){(float)x, (float)y},
+                dim_out,
+                ZOOM,
+                dim_in,
+                PAN
+            );
+            int8_t value = sample8_bilinear_at(
+                in,
+                linesize_in,
+                in_pix_step,
+                src_location.x, src_location.y,
+                dim_in.x, dim_in.y,
+                255 // out of bounds value
+            );
+
+            int8_t *dst_pixel = out +
+                                y * linesize_out +
+                                x * out_pix_step;
+
+            (*dst_pixel) = value;
+        }
+    }
+
+
+}
+
+
+static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out){
+    int x, y, plane;
+
+    int out_w = out->width;
+    int out_h = out->height;
+    int in_w = in->width;
+    int in_h = in->height;
+
+    int hsub = s->hsub;
+    int vsub = s->vsub;
+    const FFDrawContext *draw = &s->dc;
+    const struct AVPixFmtDescriptor *desc = draw->desc;
+
+
+    float2 dim_in_full  = {(float) in_w, (float) in_h};
+    float2 dim_out_full = {(float)out_w, (float)out_h};
+
+    float2 dim_in_chroma  = {(float)( in_w >> hsub), (float)( in_h >> vsub)};
+    float2 dim_out_chroma = {(float)(out_w >> hsub), (float)(out_h >> vsub)};
+
+    const float  ZOOM           = s->zoom;
+    const float2 UNCLAMPED_PAN  = {s->x, s->y};
+          float2 PAN            = clamp_pan_inbounds(UNCLAMPED_PAN, dim_out_full, ZOOM, dim_in_full);
+
+    printf("ZOOM %.3f\n", ZOOM);
+    printf("UNCLAMPED_PAN x %.3f y %.3f\n", UNCLAMPED_PAN.x, UNCLAMPED_PAN.y);
+    printf("PAN x %.3f y %.3f\n", PAN.x, PAN.y);
+
+    for(plane = 0; plane < desc->nb_components; plane++){
+        float2 dim_in  = plane == 1 || plane == 2 ? dim_in_chroma  : dim_in_full;
+        float2 dim_out = plane == 1 || plane == 2 ? dim_out_chroma : dim_out_full;
+
+        apply_zoom_plane(ZOOM, PAN, plane,
+                         desc->comp[plane].step, // in pix step
+                         desc->comp[plane].step, // out pix step
+                         in->data[plane], in->linesize[plane],
+                         out->data[plane], out->linesize[plane],
+                         dim_in,
+                         dim_out);
+    }
+
+    return 0;
 }
 
 #define intra_field_calc_8      ((uint8_t*)q)[x - pixel_step] = ((uint8_t*)p)[x] * sub_x + ((uint8_t*)p)[x - pixel_step] * inverted_sub_x
@@ -648,8 +876,8 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
                                in->data, in->linesize,
                                0, 0,
                                bound_pix_x, bound_pix_y,
-                               in_w, in_h);//,
-//                               subpix_x, subpix_y);
+                               in_w, in_h,
+                               subpix_x, subpix_y);
 
     // stretching bottom right
     av_opt_set_int(zoom->sws, "srcw", in_w, 0);
@@ -752,38 +980,40 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                       0, 0,
                       out_w, out_h);
 
+	apply_zoom(zoom, in, out);
+
     // scale
-    if(zoom_val == 1) {
-        // it's 1, just copy
-        // quite an expensive noop :D
-
-        int from_x = av_clip_c(in_w * zoom->x - out_w / 2.0, 0, in_w - out_w);
-        int from_y = av_clip_c(in_h * zoom->y - out_h / 2.0, 0, in_h - out_h);
-        float sub_x = decimal_part(av_clipf_c(in_w * zoom->x - out_w / 2.0, 0.0, in_w - out_w));
-        float sub_y = decimal_part(av_clipf_c(in_h * zoom->y - out_h / 2.0, 0.0, in_h - out_h));
-
-        ff_copy_rectangle_subpixel(&zoom->dc,
-                           out->data, out->linesize,
-                           in->data, in->linesize,
-                           0, 0,
-                           from_x,
-                           from_y,
-                           out_w, out_h, sub_x, sub_y);
-
-    } else if (zoom_val <= 0) {
-        // if it's 0 or lower do nothing
-        // noop
-    } else if (zoom_val < 1) {
-        // zoom in (0, 1)
-        ret = zoom_out(zoom, in, out, outlink);
-        if(ret)
-            goto error;
-    } else if (zoom_val > 1){
-        // zoom in (1, +ing)
-        ret = zoom_in(zoom, in, out, outlink);
-        if(ret)
-            goto error;
-    }
+//    if(zoom_val == 1) {
+//        // it's 1, just copy
+//        // quite an expensive noop :D
+//
+//        int from_x = av_clip_c(in_w * zoom->x - out_w / 2.0, 0, in_w - out_w);
+//        int from_y = av_clip_c(in_h * zoom->y - out_h / 2.0, 0, in_h - out_h);
+//        float sub_x = decimal_part(av_clipf_c(in_w * zoom->x - out_w / 2.0, 0.0, in_w - out_w));
+//        float sub_y = decimal_part(av_clipf_c(in_h * zoom->y - out_h / 2.0, 0.0, in_h - out_h));
+//
+//        ff_copy_rectangle_subpixel(&zoom->dc,
+//                           out->data, out->linesize,
+//                           in->data, in->linesize,
+//                           0, 0,
+//                           from_x,
+//                           from_y,
+//                           out_w, out_h, sub_x, sub_y);
+//
+//    } else if (zoom_val <= 0) {
+//        // if it's 0 or lower do nothing
+//        // noop
+//    } else if (zoom_val < 1) {
+//        // zoom in (0, 1)
+//        ret = zoom_out(zoom, in, out, outlink);
+//        if(ret)
+//            goto error;
+//    } else if (zoom_val > 1){
+//        // zoom in (1, +ing)
+//        ret = zoom_in(zoom, in, out, outlink);
+//        if(ret)
+//            goto error;
+//    }
 
     av_frame_free(&in);
     return ff_filter_frame(outlink, out);
