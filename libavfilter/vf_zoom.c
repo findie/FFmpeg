@@ -567,43 +567,61 @@ static inline float2 clamp_pan_inbounds(float2 PAN, float2 dim_out, float ZOOM, 
     return CLAMPED_PAN;
 }
 
+typedef struct ZoomThreadData {
+    float2 PAN;
+    float2 dim_in;
+    float2 dim_out;
 
-static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
-                             int pix_step,
-                             int pix_depth,
-                             uint8_t *in, int linesize_in,
-                             uint8_t *out, int linesize_out,
-                             float2 dim_in,
-                             float2 dim_out,
-                             FFDrawColor *fillcolor) {
+    uint8_t* in;
+    uint8_t* out;
+
+    FFDrawColor *fillcolor;
+
+    float ZOOM;
+    int plane;
+    int linesize_in;
+    int linesize_out;
+    int pix_step;
+    int pix_depth;
+
+} ZoomThreadData;
+
+static void apply_zoom_plane_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs) {
+    ZoomThreadData *td = arg;
+
     float x, y;
     int _x, _y;
 
-    int h = dim_out.y;
-    int w = dim_out.x;
+    int h = td->dim_out.y;
+    int w = td->dim_out.x;
+
+    const int slice_start = (h * jobnr) / nb_jobs;
+    const int slice_end = (h * (jobnr + 1)) / nb_jobs;
 
     // calculate origin, origin + (0, 1), origin + (1, 0)
     float2 src_location_00 = scale_coords_pxout_to_pxin(
         (float2){0.0f, 0.0f},
-        dim_out,
-        ZOOM,
-        dim_in,
-        PAN
+        td->dim_out,
+        td->ZOOM,
+        td->dim_in,
+        td->PAN
     );
     float2 src_location_01 = scale_coords_pxout_to_pxin(
         (float2){0.0f, 1.0f},
-        dim_out,
-        ZOOM,
-        dim_in,
-        PAN
+        td->dim_out,
+        td->ZOOM,
+        td->dim_in,
+        td->PAN
     );
     float2 src_location_10 = scale_coords_pxout_to_pxin(
         (float2){1.0f, 0.0f},
-        dim_out,
-        ZOOM,
-        dim_in,
-        PAN
+        td->dim_out,
+        td->ZOOM,
+        td->dim_in,
+        td->PAN
     );
+
+
 
     // calculate deltas on X and Y
     // to use to loop over frame space
@@ -614,38 +632,38 @@ static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
     float source_y = src_location_00.y;
     float delta_y = src_location_01.y - src_location_00.y;
 
-    for(y = source_y, _y = 0; _y < h; y+=delta_y, _y++) {
+    for(y = source_y + slice_start * delta_y, _y = slice_start; _y < slice_end; y += delta_y, _y++) {
         for(x = source_x, _x = 0; _x < w; x+=delta_x, _x++) {
 
-            if (pix_depth == 8) {
+            if (td->pix_depth == 8) {
                 int8_t value = sample8_bilinear_at(
-                    in,
-                    linesize_in,
-                    pix_step,
+                    td->in,
+                    td->linesize_in,
+                    td->pix_step,
                     x, y,
-                    dim_in.x, dim_in.y,
-                    fillcolor->comp[plane].u8[0] // out of bounds value
+                    td->dim_in.x, td->dim_in.y,
+                    td->fillcolor->comp[td->plane].u8[0] // out of bounds value
                 );
 
-                int8_t *dst_pixel = out +
-                                    _y * linesize_out +
-                                    _x * pix_step;
+                int8_t *dst_pixel = td->out +
+                                    _y * td->linesize_out +
+                                    _x * td->pix_step;
 
                 (*dst_pixel) = value;
             }
             else {
                 int16_t value = sample16_bilinear_at(
-                                    in,
-                                    linesize_in,
-                                    pix_step,
-                                    x, y,
-                                    dim_in.x, dim_in.y,
-                                    fillcolor->comp[plane].u16[0] // out of bounds value
-                                );
+                    td->in,
+                    td->linesize_in,
+                    td->pix_step,
+                    x, y,
+                    td->dim_in.x, td->dim_in.y,
+                    td->fillcolor->comp[td->plane].u16[0] // out of bounds value
+                );
 
-                int16_t *dst_pixel = out +
-                                     _y * linesize_out +
-                                     _x * pix_step;
+                int16_t *dst_pixel = td->out +
+                                     _y * td->linesize_out +
+                                     _x * td->pix_step;
 
                 (*dst_pixel) = value;
             }
@@ -656,7 +674,7 @@ static void apply_zoom_plane(float ZOOM, float2 PAN, int plane,
 }
 
 
-static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out, FFDrawColor *fillcolor){
+static int apply_zoom(ZoomContext *s, AVFilterLink *link, AVFrame *in, AVFrame *out, FFDrawColor *fillcolor){
     int x, y, plane;
 
     int out_w = out->width;
@@ -684,18 +702,27 @@ static int apply_zoom(ZoomContext *s, AVFrame *in, AVFrame *out, FFDrawColor *fi
     av_log(s, AV_LOG_DEBUG, "UNCLAMPED_PAN x %.3f y %.3f\n", UNCLAMPED_PAN.x, UNCLAMPED_PAN.y);
     av_log(s, AV_LOG_DEBUG, "PAN x %.3f y %.3f\n", PAN.x, PAN.y);
 
+    ZoomThreadData td;
+    td.PAN = PAN;
+    td.fillcolor = fillcolor;
+    td.ZOOM = ZOOM;
+
     for(plane = 0; plane < desc->nb_components; plane++){
         float2 dim_in  = plane == 1 || plane == 2 ? dim_in_chroma  : dim_in_full;
         float2 dim_out = plane == 1 || plane == 2 ? dim_out_chroma : dim_out_full;
 
-        apply_zoom_plane(ZOOM, PAN, plane,
-                         desc->comp[plane].step,
-                         desc->comp[plane].depth,
-                         in->data[plane], in->linesize[plane],
-                         out->data[plane], out->linesize[plane],
-                         dim_in,
-                         dim_out,
-                         fillcolor);
+        td.dim_in = dim_in;
+        td.dim_out = dim_out;
+        td.in = in->data[plane];
+        td.out = out->data[plane];
+        td.plane = plane;
+        td.linesize_in = in->linesize[plane];
+        td.linesize_out = out->linesize[plane];
+        td.pix_step = desc->comp[plane].step;
+        td.pix_depth = desc->comp[plane].depth;
+
+        link->dst->internal->execute(link->dst, apply_zoom_plane_slice, &td, NULL, FFMIN(out_h, ff_filter_get_nb_threads(link->dst)));
+
     }
 
     return 0;
@@ -768,7 +795,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 		zoom->y = av_clipd_c(zoom->y, 0, 1);
 	}
 
-	apply_zoom(zoom, in, out, &zoom->fillcolor);
+	apply_zoom(zoom, inlink, in, out, &zoom->fillcolor);
 
     av_frame_free(&in);
     return ff_filter_frame(outlink, out);
@@ -819,5 +846,5 @@ AVFilter ff_vf_zoom = {
     .inputs        = zoom_inputs,
     .outputs       = zoom_outputs,
     .priv_class    = &zoom_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
 };
