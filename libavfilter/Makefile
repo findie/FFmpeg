@@ -466,6 +466,7 @@ OBJS-$(CONFIG_YAEPBLUR_FILTER)               += vf_yaepblur.o
 OBJS-$(CONFIG_ZMQ_FILTER)                    += f_zmq.o
 OBJS-$(CONFIG_ZOOMPAN_FILTER)                += vf_zoompan.o
 OBJS-$(CONFIG_ZOOM_FILTER)                   += vf_zoom.o
+OBJS-$(CONFIG_ZOOM_OPENCL_FILTER)            += vf_zoom_opencl.o opencl.o opencl/zoom.o
 OBJS-$(CONFIG_ZSCALE_FILTER)                 += vf_zscale.o
 OBJS-$(CONFIG_FRAMECHANGE_FILTER)            += vf_framechange.o
 OBJS-$(CONFIG_SSIMCHANGE_FILTER)             += vf_ssimchange.o

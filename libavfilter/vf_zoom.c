@@ -665,7 +665,7 @@ static const AVFilterPad zoom_outputs[] = {
 
 AVFilter ff_vf_zoom = {
     .name          = "zoom",
-    .description   = NULL_IF_CONFIG_SMALL("Zoom in and out video."),
+    .description   = NULL_IF_CONFIG_SMALL("Zoom in and out video, apply pan and change aspect ratio"),
     .priv_size     = sizeof(ZoomContext),
     .init          = init,
     .uninit        = uninit,

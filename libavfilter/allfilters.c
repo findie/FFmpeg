@@ -446,6 +446,7 @@ extern AVFilter ff_vf_zoompan;
 extern AVFilter ff_vf_zscale;
 
 extern AVFilter ff_vf_zoom;
+extern AVFilter ff_vf_zoom_opencl;
 extern AVFilter ff_vf_framechange;
 extern AVFilter ff_vf_ssimchange;
 extern AVFilter ff_vf_tint;
