@@ -124,10 +124,6 @@ static av_cold int init(AVFilterContext *ctx)
     return ff_opencl_filter_init(ctx);
 }
 
-static int query_formats(AVFilterContext *ctx)
-{
-    return ff_set_common_formats(ctx, ff_draw_supported_pixel_formats(0));
-}
 static int config_props(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
@@ -250,24 +246,6 @@ static int config_output(AVFilterLink *outlink)
     return ff_opencl_filter_config_output(outlink);
 }
 
-static AVFrame* alloc_frame(enum AVPixelFormat pixfmt, int w, int h)
-{
-    AVFrame *frame = av_frame_alloc();
-    if (!frame)
-        return NULL;
-
-    frame->format = pixfmt;
-    frame->width  = w;
-    frame->height = h;
-
-    if (av_frame_get_buffer(frame, 32) < 0) {
-        av_frame_free(&frame);
-        return NULL;
-    }
-
-    return frame;
-}
-
 static int zoom_opencl_load(AVFilterContext *avctx, AVFrame *in)
 {
     ZoomOpenCLContext *ctx = avctx->priv;
@@ -319,16 +297,12 @@ static int filter_frame(AVFilterLink *avctx, AVFrame *in)
     ZoomOpenCLContext *zoom = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
     int err, plane, kernel_arg;
-    double zoom_val;
     AVFrame *out;
     size_t global_work[2];
     cl_int cle;
 
     if (!in->hw_frames_ctx)
         return AVERROR(EINVAL);
-
-    const int in_w = in->width;
-    const int in_h = in->height;
 
     const int out_w = outlink->w;
     const int out_h = outlink->h;
@@ -364,12 +338,12 @@ static int filter_frame(AVFilterLink *avctx, AVFrame *in)
       // XYZ
       zoom->x = zoom->var_values[VAR_X] = schedule[offset + 0];
       zoom->y = zoom->var_values[VAR_Y] = schedule[offset + 1];
-      zoom_val = zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = schedule[offset + 2];
+      zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = schedule[offset + 2];
       av_log(zoom, AV_LOG_DEBUG, "schedule index %ld x:%.3f y:%.3f z:%.3f\n", offset / 3, zoom->x, zoom->y, zoom->zoom);
 
     }else{
       // eval Z (zoom)
-      zoom_val = zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = av_expr_eval(zoom->zoom_expr,
+      zoom->zoom = zoom->var_values[VAR_Z] = zoom->var_values[VAR_ZOOM] = av_expr_eval(zoom->zoom_expr,
                                                                                                   zoom->var_values,
                                                                                                   NULL);
       // eval x/y

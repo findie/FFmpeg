@@ -3,7 +3,7 @@
 
 __constant sampler_t sampler = (CLK_NORMALIZED_COORDS_FALSE |
                                 CLK_FILTER_LINEAR           |
-                                CLK_ADDRESS_CLAMP);
+                                CLK_ADDRESS_NONE);
 
 static inline float2 scale_coords_pxout_to_pxin(float2 pix_out, float2 dim_out, float ZOOM, float2 dim_in, float2 PAN) {
 
@@ -63,7 +63,7 @@ static inline float2 clamp_pan_inbounds(float2 PAN, float2 dim_out, float ZOOM, 
             CLAMPED_PAN.x = clamp(PAN.x, top_left.x, bottom_right.x);
             CLAMPED_PAN.y = clamp(PAN.y, top_left.y, bottom_right.y);
         }
-        // if it doesn't fix
+        // if it doesn't fit
         else {
 
             CLAMPED_PAN.x = adjusted_dim_in.x > dim_out.x ?
@@ -72,9 +72,9 @@ static inline float2 clamp_pan_inbounds(float2 PAN, float2 dim_out, float ZOOM, 
                 // fits on W
                 max(min(PAN.y, bottom_right.x), top_left.x);
             CLAMPED_PAN.y = adjusted_dim_in.y > dim_out.y ?
-                // doesn't fit on W
+                // doesn't fit on H
                 max(min(1 - PAN.y, top_left.y), bottom_right.y):
-                // fits on W
+                // fits on H
                 max(min(PAN.y, bottom_right.y), top_left.y);
 
         }
@@ -97,11 +97,9 @@ __kernel void zoom(__write_only image2d_t destination,
     float2 dim_in  = (float2)(get_image_dim(source).x, get_image_dim(source).y);
     float2 dim_out = (float2)(get_image_dim(destination).x, get_image_dim(destination).y);
 
-    float2 PAN = UNCLAMPED_PAN;
+    float2 PAN = clamp_pan_inbounds(UNCLAMPED_PAN, dim_out, ZOOM, dim_in);
 
     int2 dst_location = (int2)(get_global_id(0), get_global_id(1));
-
-    PAN = clamp_pan_inbounds(PAN, dim_out, ZOOM, dim_in);
 
     float2 src_location = scale_coords_pxout_to_pxin(
         (float2)(get_global_id(0), get_global_id(1)),
