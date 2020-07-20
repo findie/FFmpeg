@@ -52,7 +52,7 @@ static inline float2 scale_coords_find_PAN(float2 pix_in, float2 pix_out, float2
 static inline float2 clamp_pan_inbounds(float2 PAN, float2 dim_out, float ZOOM, float2 dim_in) {
 
     float2 adjusted_dim_in = dim_in * ZOOM;
-    float2 top_left = scale_coords_find_PAN((0.0f, 0.0f), (-1.0f, -1.0f), dim_out, ZOOM, dim_in);
+    float2 top_left = scale_coords_find_PAN((0.0f, 0.0f), (0.0f, 0.0f), dim_out, ZOOM, dim_in);
     float2 bottom_right = 1 - top_left;
 
     float2 CLAMPED_PAN = (0.0f, 0.0f);
