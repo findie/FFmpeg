@@ -50,6 +50,7 @@ typedef struct ThreadData {
     int template_w, template_h, template_linesize;
 
     uint8_t* dest;
+    uint8_t* src;
     int dest_w, dest_h, dest_linesize;
 
     uint8_t channel;
@@ -165,6 +166,7 @@ static int tint_plane_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_j
   int template_linesize = td->template_linesize;
 
   uint8_t *dest = td->dest;
+  uint8_t *src  = td->src;
   int dest_w = td->dest_w;
   int dest_h = td->dest_h;
   int dest_linesize = td->dest_linesize;
@@ -182,6 +184,7 @@ static int tint_plane_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_j
   unsigned int template_stride = template_linesize;
 
   uint8_t *dest_row = dest + slice_start * dest_stride;
+  uint8_t *src_row  = src  + slice_start * dest_stride;
   uint8_t *template_row = template + (slice_start * h_mult) * template_stride;
 
   for (unsigned int y = slice_start; y < slice_end; y++) {
@@ -189,11 +192,12 @@ static int tint_plane_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_j
       uint8_t template_value = template_row[x * w_mult];
 
       dest_row[x] =
-          lut_image_with_strength[dest_row[x]] +
+          lut_image_with_strength[src_row[x]] +
           lut_tint_with_strength[template_value];
     }
 
     dest_row += dest_stride;
+    src_row  += dest_stride;
     template_row += template_stride * h_mult;
   }
 
@@ -202,7 +206,8 @@ static int tint_plane_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_j
 
 
 static void tint_plane(uint8_t *template, int template_w, int template_h, int template_linesize,
-                      uint8_t *dest, int dest_w, int dest_h, int dest_linesize,
+                       uint8_t *src,
+                       uint8_t *dest, int dest_w, int dest_h, int dest_linesize,
                        uint8_t *lut_tint_with_strength,
                        uint8_t *lut_image_with_strength) {
 
@@ -217,7 +222,7 @@ static void tint_plane(uint8_t *template, int template_w, int template_h, int te
       uint8_t template_value = template[(y * h_mult) * template_stride + x * w_mult];
 
       dest[y * dest_stride + x] =
-          lut_image_with_strength[dest[y * dest_stride + x]] +
+          lut_image_with_strength[src[y * dest_linesize + x]] +
           lut_tint_with_strength[template_value];
     }
   }
@@ -230,6 +235,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterLink *outlink = ctx->outputs[0];
     int direct = 0;
     AVFrame *out;
+
+    if(tint->strength == 0){
+        return ff_filter_frame(outlink, in);
+    }
 
     if (av_frame_is_writable(in)) {
         direct = 1;
@@ -258,31 +267,49 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
       td.template_linesize = template_linesize;
 
       // color components
+      td.src = in->data[1];
       td.dest = out->data[1];
       td.dest_w = tint->planes[1].width;
       td.dest_h = tint->planes[1].height;
-      td.dest_linesize = in->linesize[1];
+      td.dest_linesize = out->linesize[1];
       td.channel = 1;
 
+//      tint_plane(td.template, td.template_w, td.template_h, td.template_linesize,
+//                 td.src,
+//                 td.dest, td.dest_w, td.dest_h, td.dest_linesize,
+//                 tint->lut_tint_with_strength[td.channel],
+//                 tint->lut_image_with_strength);
       ctx->internal->execute(ctx, tint_plane_slice, &td, NULL, FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
       emms_c();
 
+      td.src = in->data[2];
       td.dest = out->data[2];
       td.dest_w = tint->planes[2].width;
       td.dest_h = tint->planes[2].height;
-      td.dest_linesize = in->linesize[2];
+      td.dest_linesize = out->linesize[2];
       td.channel = 2;
 
+//      tint_plane(td.template, td.template_w, td.template_h, td.template_linesize,
+//                 td.src,
+//                 td.dest, td.dest_w, td.dest_h, td.dest_linesize,
+//                 tint->lut_tint_with_strength[td.channel],
+//                 tint->lut_image_with_strength);
       ctx->internal->execute(ctx, tint_plane_slice, &td, NULL, FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
       emms_c();
 
       // last is luma (which may also be the template)
+      td.src = in->data[0];
       td.dest = out->data[0];
       td.dest_w = tint->planes[0].width;
       td.dest_h = tint->planes[0].height;
-      td.dest_linesize = in->linesize[0];
+      td.dest_linesize = out->linesize[0];
       td.channel = 0;
 
+//      tint_plane(td.template, td.template_w, td.template_h, td.template_linesize,
+//                 td.src,
+//                 td.dest, td.dest_w, td.dest_h, td.dest_linesize,
+//                 tint->lut_tint_with_strength[td.channel],
+//                 tint->lut_image_with_strength);
       ctx->internal->execute(ctx, tint_plane_slice, &td, NULL, FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
       emms_c();
     }
