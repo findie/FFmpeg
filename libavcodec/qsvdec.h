@@ -33,7 +33,7 @@
 #include "libavutil/pixfmt.h"
 
 #include "avcodec.h"
-#include "hwaccel.h"
+#include "hwconfig.h"
 #include "qsv_internal.h"
 
 typedef struct QSVContext {
@@ -42,7 +42,7 @@ typedef struct QSVContext {
 
     // the session we allocated internally, in case the caller did not provide
     // one
-    mfxSession internal_session;
+    QSVSession internal_qs;
 
     QSVFramesContext frames_ctx;
 
@@ -59,12 +59,14 @@ typedef struct QSVContext {
     enum AVPixelFormat orig_pix_fmt;
     uint32_t fourcc;
     mfxFrameInfo frame_info;
+    AVBufferPool *pool;
 
     int initialized;
 
     // options set by the caller
     int async_depth;
     int iopattern;
+    int gpu_copy;
 
     char *load_plugins;
 

@@ -84,6 +84,8 @@ typedef struct ZoomContext {
     double  var_values[VAR_VARS_NB];
 
     struct SwsContext* sws;
+
+    int hsub, vsub;
 } ZoomContext;
 
 enum {
@@ -144,6 +146,9 @@ static int config_props(AVFilterLink *inlink)
     ZoomContext *zoom = ctx->priv;
 
     zoom->desc = av_pix_fmt_desc_get(inlink->format);
+
+    zoom->hsub = zoom->desc->log2_chroma_w;
+    zoom->vsub = zoom->desc->log2_chroma_h;
 
     zoom->nb_planes = av_pix_fmt_count_planes(inlink->format);
     zoom->nb_components = zoom->desc->nb_components;
@@ -284,6 +289,13 @@ static AVFrame* alloc_frame(enum AVPixelFormat pixfmt, int w, int h)
     return frame;
 }
 
+static inline int normalize_xy(double d, int chroma_sub)
+{
+  if (isnan(d))
+    return INT_MAX;
+  return (int)d & ~((1 << chroma_sub) - 1);
+}
+
 static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
 {
     av_log(zoom, AV_LOG_DEBUG, "zoom out\n");
@@ -305,6 +317,8 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
           int out_h = in->height * zoom_val;
     const int out_f = outlink->format;
 
+    const AVPixFmtDescriptor* out_f_desc = av_pix_fmt_desc_get(outlink->format);
+
     const int fout_w = out->width;
     const int fout_h = out->height;
 
@@ -314,6 +328,13 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
 
     const double x  = zoom->x;
     const double y  = zoom->y;
+
+    uint8_t in_chroma_w = zoom->desc->log2_chroma_w;
+    uint8_t in_chroma_h = zoom->desc->log2_chroma_h;
+
+    uint8_t out_chroma_w = out_f_desc->log2_chroma_w;
+    uint8_t out_chroma_h = out_f_desc->log2_chroma_h;
+
 
     if(out_h <= 0 || out_w <= 0)
         goto bypass;
@@ -342,17 +363,54 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     zoom->sws = NULL;
 
     av_log(zoom, AV_LOG_DEBUG, "x: %.3f y: %.3f\n", x, y);
-    const int dx = FFMIN(FFMAX(fout_w * x - out_w/2, 0), FFMAX(fout_w - out_w, 0));
-    const int dy = FFMIN(FFMAX(fout_h * y - out_h/2, 0), FFMAX(fout_h - out_h, 0));
+
+    int has_space_w = fout_w >= out_w;
+    int has_space_h = fout_h >= out_h;
+
+    const int dx = has_space_w ?
+            FFMIN(FFMAX(fout_w * x - out_w/2, 0), FFMAX(fout_w - out_w, 0)) :
+            (fout_w - out_w) * x;
+
+    const int dy = has_space_h ?
+            FFMIN(FFMAX(fout_h * y - out_h/2, 0), FFMAX(fout_h - out_h, 0)) :
+            (fout_h - out_h) * y;
+
     av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
     av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
 
+    int px[4] = {0, 0, 0, 0}, py[4] = {0, 0, 0, 0};
+    uint8_t *input[4];
+
+    // if we don't have space for the whole frame, chop it from the left
+    if(!has_space_w) {
+        // data cutoffs - left (with step support for 10/12/16bit color spaces)
+        px[0] = (- dx * out_f_desc->comp[0].step);
+
+        // chroma
+        px[1] = (AV_CEIL_RSHIFT(- dx, out_chroma_w) * out_f_desc->comp[1].step);
+        px[2] = (AV_CEIL_RSHIFT(- dx, out_chroma_w) * out_f_desc->comp[2].step);
+
+        // alpha
+        px[3] = (- dx * out_f_desc->comp[3].step);
+    }
+
+    // if we don't have space for the whole frame, chop it from the top
+    if(!has_space_h) {
+        // data cutoff - top
+        py[1] = py[2] = AV_CEIL_RSHIFT(- dy, out_chroma_h);
+        py[0] = py[3] = (- dy);
+    }
+
+    for (int k = 0; temp_frame->data[k]; k++)
+        input[k] = temp_frame->data[k] + py[k] * temp_frame->linesize[k] + px[k];
+
     ff_copy_rectangle2(&zoom->dc,
                        out->data, out->linesize,
-                       temp_frame->data, temp_frame->linesize,
-                       dx, dy, 0, 0,
-                       FFMIN(out_w, fout_w - dx),
-                       FFMIN(out_h, fout_h - dy));
+                       (const uint8_t *const *)&input, temp_frame->linesize,
+                       FFMAX(dx, 0), FFMAX(dy, 0),
+                       0, 0,
+                       FFMIN(out_w, has_space_w ? fout_w - dx : fout_w),
+                       FFMIN(out_h, has_space_h ? fout_h - dy : fout_h));
 
     av_frame_free(&temp_frame);
 
@@ -402,9 +460,18 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "in_w: %d in_h: %d\n", in_w, in_h);
     av_log(zoom, AV_LOG_DEBUG, "out_w: %d out_h: %d\n", out_w, out_h);
 
-    const int dx = FFMIN(FFMAX(in->width * x - in_w / 2, 0), FFMAX(in->width - in_w, 0));
-    const int dy = FFMIN(FFMAX(in->height * y - in_h / 2, 0), FFMAX(in->height - in_h, 0));
+    const double pix_x = in->width * x - in_w / 2.0;
+    const double pix_y = in->height * y - in_h / 2.0;
+
+    const int dx = normalize_xy(
+        FFMIN(FFMAX(pix_x, 0), FFMAX(in->width - in_w, 0)),
+        zoom->hsub);
+    const int dy = normalize_xy(
+        FFMIN(FFMAX(pix_y, 0), FFMAX(in->height - in_h, 0)),
+        zoom->vsub);
+
     av_log(zoom, AV_LOG_DEBUG, "x: %0.3f y: %0.3f\n", x, y);
+    av_log(zoom, AV_LOG_DEBUG, "pix_x: %.3f pix_y: %.3f\n", pix_x, pix_y);
     av_log(zoom, AV_LOG_DEBUG, "dx: %d dy: %d\n", dx, dy);
 
 
@@ -418,11 +485,17 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "planes: %d\n", zoom->nb_planes);
     av_log(zoom, AV_LOG_DEBUG, "components: %d\n", zoom->nb_components);
 
-    // cutoff top left
-    px[1] = px[2] = AV_CEIL_RSHIFT(dx, chroma_w);
-    //                    support for yuv*, rgb*, etc... (any components & planes)
-    px[0] = px[3] = dx * (1.0 * zoom->nb_components / zoom->nb_planes);
+    // data cutoffs - left (with step support for 10/12/16bit color spaces)
+    px[0] = dx * zoom->desc->comp[0].step;
 
+    // chroma
+    px[1] = AV_CEIL_RSHIFT(dx, chroma_w) * zoom->desc->comp[1].step;
+    px[2] = AV_CEIL_RSHIFT(dx, chroma_w) * zoom->desc->comp[2].step;
+
+    // alpha
+    px[3] = dx * zoom->desc->comp[3].step;
+
+    // data cutoff - top
     py[1] = py[2] = AV_CEIL_RSHIFT(dy, chroma_h);
     py[0] = py[3] = dy;
 
@@ -592,7 +665,7 @@ static const AVFilterPad zoom_outputs[] = {
 
 AVFilter ff_vf_zoom = {
     .name          = "zoom",
-    .description   = NULL_IF_CONFIG_SMALL("Zoom in and out video."),
+    .description   = NULL_IF_CONFIG_SMALL("Zoom in and out video, apply pan and change aspect ratio"),
     .priv_size     = sizeof(ZoomContext),
     .init          = init,
     .uninit        = uninit,
