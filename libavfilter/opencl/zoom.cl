@@ -1,5 +1,7 @@
 #define DEBUG
+#define DEBUG_CENTER
 #undef DEBUG
+#undef DEBUG_CENTER
 
 __constant sampler_t sampler = (CLK_NORMALIZED_COORDS_FALSE |
                                 CLK_FILTER_LINEAR           |
@@ -68,12 +70,12 @@ static inline float2 clamp_pan_inbounds(float2 PAN, float2 dim_out, float ZOOM, 
 
             CLAMPED_PAN.x = adjusted_dim_in.x > dim_out.x ?
                 // doesn't fit on W
-                max(min(1 - PAN.x, top_left.x), bottom_right.x):
+                clamp(1.0f - PAN.x, 0.0f, 1.0f) * (top_left.x - bottom_right.x) + bottom_right.x :
                 // fits on W
-                max(min(PAN.y, bottom_right.x), top_left.x);
+                max(min(PAN.x, bottom_right.x), top_left.x);
             CLAMPED_PAN.y = adjusted_dim_in.y > dim_out.y ?
                 // doesn't fit on H
-                max(min(1 - PAN.y, top_left.y), bottom_right.y):
+                clamp(1.0f - PAN.y, 0.0f, 1.0f) * (top_left.y - bottom_right.y) + bottom_right.y :
                 // fits on H
                 max(min(PAN.y, bottom_right.y), top_left.y);
 
@@ -111,9 +113,16 @@ __kernel void zoom(__write_only image2d_t destination,
 
 #ifdef DEBUG
     if(dst_location.x == 0 && dst_location.y == 0) {
-        printf("ZOOM %.3f y %.3f\n", ZOOM);
+        float2 top_left = scale_coords_find_PAN((0.0f, 0.0f), (0.0f, 0.0f), dim_out, ZOOM, dim_in);
+        float2 bottom_right = 1 - top_left;
+
+        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+        printf("ZOOM %.3f\n", ZOOM);
         printf("dim_in x %.3f y %.3f\n",dim_in.x,dim_in.y);
         printf("dim_out x %.3f y %.3f\n",dim_out.x,dim_out.y);
+        printf("UNCLAMPED_PAN x %.3f y %.3f\n",UNCLAMPED_PAN.x,UNCLAMPED_PAN.y);
+        printf("TOP_LEFT X %f Y %f \n", top_left.x, top_left.y);
+        printf("BOTTOM_RIGHT X %f Y %f \n", bottom_right.x, bottom_right.y);
         printf("PAN x %.3f y %.3f\n",PAN.x,PAN.y);
         printf("src_location x %.3f y %.3f\n",src_location.x,src_location.y);
         printf("dst_location x %d y %d\n",dst_location.x,dst_location.y);
@@ -126,7 +135,7 @@ __kernel void zoom(__write_only image2d_t destination,
     write_imagef(destination, dst_location, value);
 
 
-#ifdef DEBUG
+#ifdef DEBUG_CENTER
     // DRAW CENTER GUIDES DEBUG
     if( fabs(dst_location.x - dim_out.x/2) < 2 ||
         fabs(dst_location.y - dim_out.y/2) < 2 )
