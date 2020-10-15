@@ -75,6 +75,7 @@ typedef struct ZoomContext {
 
     int             desiredWidth;
     int             desiredHeight;
+    int             exact;
     double          outAspectRatio;
 
     char*           zoom_expr_str;
@@ -118,6 +119,7 @@ static const AVOption zoom_options[] = {
     { "ar",                 "set aspect ratio",                     OFFSET(outAspectRatio), AV_OPT_TYPE_DOUBLE, {.dbl=0},            0.00    ,   100   , FLAGS },
     { "width",              "set desired width",                    OFFSET(desiredWidth),   AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
     { "height",             "set desired height",                   OFFSET(desiredHeight),  AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
+    { "exact",              "set frame size is exact or div by 2",  OFFSET(exact),          AV_OPT_TYPE_BOOL  , {.i64=0},            0       ,   1     , FLAGS },
     { "fillcolor",          "set color for background",             OFFSET(fillcolor.rgba), AV_OPT_TYPE_COLOR,  {.str="black@0"},    CHAR_MIN, CHAR_MAX, FLAGS },
 
     { "interpolation",      "enable interpolation when scaling",    OFFSET(interpolation),  AV_OPT_TYPE_INT,    {.i64=FAST_BILINEAR}, SWS_FAST_BILINEAR,   SPLINE, FLAGS, "interpolation"},
@@ -274,17 +276,20 @@ static int config_output(AVFilterLink *outlink)
         outlink->h = s->desiredHeight;
     }
 
-    if(outlink->w % 2 != 0){
-      outlink->w -= 1;
+    if(!s->exact) {
+        if (outlink->w % 2 != 0) {
+            outlink->w -= 1;
+        }
+        if (outlink->h % 2 != 0) {
+            outlink->h -= 1;
+        }
     }
-    if(outlink->h % 2 != 0){
-      outlink->h -= 1;
+
+    if (outlink->w <= 0) {
+        outlink->w = 2;
     }
-    if(outlink->w <= 0){
-      outlink->w = 2;
-    }
-    if(outlink->h <= 0){
-      outlink->h = 2;
+    if (outlink->h <= 0) {
+        outlink->h = 2;
     }
     return 0;
 }
