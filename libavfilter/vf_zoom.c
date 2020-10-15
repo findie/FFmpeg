@@ -64,12 +64,17 @@ typedef struct ZoomContext {
     unsigned long   schedule_index;
 
     double          zoom_max;
+    // used for actual zoom
     double          zoom;
+    // used to determine if we need to adjust the zoom when w/h are set & different than expected
+    double          shadowZoom;
     double          x;
     double          y;
     int             interpolation;
     FFDrawColor     fillcolor;
 
+    int             desiredWidth;
+    int             desiredHeight;
     double          outAspectRatio;
 
     char*           zoom_expr_str;
@@ -110,8 +115,10 @@ static const AVOption zoom_options[] = {
     { "z",                  "set zoom offset expression",           OFFSET(zoom_expr_str),  AV_OPT_TYPE_STRING, {.str="1"},          CHAR_MIN, CHAR_MAX, FLAGS },
     { "x",                  "set x offset expression",              OFFSET(x_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
     { "y",                  "set y offset expression",              OFFSET(y_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
-    { "ar",                 "set aspect ratio",                     OFFSET(outAspectRatio), AV_OPT_TYPE_DOUBLE, {.dbl=0},          0.00    ,   100   , FLAGS },
-    { "fillcolor",          "set color for background",             OFFSET(fillcolor.rgba), AV_OPT_TYPE_COLOR,  {.str="black@0"},  CHAR_MIN, CHAR_MAX, FLAGS },
+    { "ar",                 "set aspect ratio",                     OFFSET(outAspectRatio), AV_OPT_TYPE_DOUBLE, {.dbl=0},            0.00    ,   100   , FLAGS },
+    { "width",              "set desired width",                    OFFSET(desiredWidth),   AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
+    { "height",             "set desired height",                   OFFSET(desiredHeight),  AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
+    { "fillcolor",          "set color for background",             OFFSET(fillcolor.rgba), AV_OPT_TYPE_COLOR,  {.str="black@0"},    CHAR_MIN, CHAR_MAX, FLAGS },
 
     { "interpolation",      "enable interpolation when scaling",    OFFSET(interpolation),  AV_OPT_TYPE_INT,    {.i64=FAST_BILINEAR}, SWS_FAST_BILINEAR,   SPLINE, FLAGS, "interpolation"},
       { "fast_bilinear",                                      0,                        0,  AV_OPT_TYPE_CONST,  {.i64=FAST_BILINEAR}, 0,                        0, FLAGS, "interpolation"},
@@ -167,6 +174,10 @@ static int config_props(AVFilterLink *inlink)
 
     if(zoom->outAspectRatio == 0) {
       zoom->outAspectRatio = 1.0 * inlink->w / inlink->h;
+    }
+
+    if(zoom->desiredWidth > 0 && zoom->desiredHeight > 0) {
+        zoom->outAspectRatio = 1.0 * zoom->desiredWidth / zoom->desiredHeight;
     }
 
     if (zoom->outAspectRatio <= 1) {
@@ -255,6 +266,13 @@ static int config_output(AVFilterLink *outlink)
       outlink->w = round(in_w * (aspectRatio / originalAspectRatio));
       outlink->h = in_h;
     }
+    s->shadowZoom = 1;
+
+    if(s->desiredWidth > 0 && s->desiredHeight > 0) {
+        s->shadowZoom = 1.0 * s->desiredWidth / outlink->w;
+        outlink->w = s->desiredWidth;
+        outlink->h = s->desiredHeight;
+    }
 
     if(outlink->w % 2 != 0){
       outlink->w -= 1;
@@ -333,7 +351,7 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
 
     int ret = 0;
 
-    const double zoom_val = zoom->zoom;
+    const double zoom_val = zoom->zoom * zoom->shadowZoom;
 
     const int in_w  = in->width;
     const int in_h  = in->height;
@@ -598,9 +616,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                       out_w, out_h);
 
     // scale
-    if(zoom_val == 1) {
-        // it's 1, just copy
-        // quite an expensive noop :D
+    if(zoom_val == 1 && zoom->shadowZoom == 1) {
+        // it's 1 with no extra fancy zooming, just copy
+        // the area that is in view
         ff_copy_rectangle2(&zoom->dc,
                            out->data, out->linesize,
                            in->data, in->linesize,
@@ -616,7 +634,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         ret = zoom_out(zoom, in, out, outlink);
         if(ret)
             goto error;
-    } else if (zoom_val > 1){
+    } else if (zoom_val >= 1){
         // zoom in (1, +ing)
         ret = zoom_in(zoom, in, out, outlink);
         if(ret)
