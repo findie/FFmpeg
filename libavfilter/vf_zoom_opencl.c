@@ -66,11 +66,16 @@ typedef struct ZoomOpenCLContext {
     unsigned long   schedule_index;
 
     double          zoom_max;
+    // used for actual zoom
     double          zoom;
+    // used to determine if we need to adjust the zoom when w/h are set & different than expected
+    double          shadowZoom;
     double          x;
     double          y;
     FFDrawColor     fillcolor;
 
+    int             desiredWidth;
+    int             desiredHeight;
     double          outAspectRatio;
 
     char*           zoom_expr_str;
@@ -111,7 +116,9 @@ static const AVOption zoom_opencl_options[] = {
     { "z",                  "set zoom offset expression",           OFFSET(zoom_expr_str),  AV_OPT_TYPE_STRING, {.str="1"},          CHAR_MIN, CHAR_MAX, FLAGS },
     { "x",                  "set x offset expression",              OFFSET(x_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
     { "y",                  "set y offset expression",              OFFSET(y_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
-    { "ar",                 "set aspect ratio",                     OFFSET(outAspectRatio), AV_OPT_TYPE_DOUBLE, {.dbl=0},          0.00    ,   100   , FLAGS },
+    { "ar",                 "set aspect ratio",                     OFFSET(outAspectRatio), AV_OPT_TYPE_DOUBLE, {.dbl=0},            0.00    ,   100   , FLAGS },
+    { "width",              "set desired width",                    OFFSET(desiredWidth),   AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
+    { "height",             "set desired height",                   OFFSET(desiredHeight),  AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
     { "fillcolor",          "set color for background",             OFFSET(fillcolor.rgba), AV_OPT_TYPE_COLOR,  {.str="black@0"},  CHAR_MIN, CHAR_MAX, FLAGS },
 
     { NULL }
@@ -140,6 +147,9 @@ static int config_props(AVFilterLink *inlink)
 
     if(zoom->outAspectRatio == 0) {
       zoom->outAspectRatio = 1.0 * inlink->w / inlink->h;
+    }
+    if(zoom->desiredWidth > 0 && zoom->desiredHeight > 0) {
+      zoom->outAspectRatio = 1.0 * zoom->desiredWidth / zoom->desiredHeight;
     }
 
     if (zoom->outAspectRatio <= 1) {
@@ -226,6 +236,13 @@ static int config_output(AVFilterLink *outlink)
     }else{
       outlink->w = round(in_w * (aspectRatio / originalAspectRatio));
       outlink->h = in_h;
+    }
+    s->shadowZoom = 1;
+
+    if(s->desiredWidth > 0 && s->desiredHeight > 0) {
+        s->shadowZoom = 1.0 * s->desiredWidth / outlink->w;
+        outlink->w = s->desiredWidth;
+        outlink->h = s->desiredHeight;
     }
 
     if(outlink->w % 2 != 0){
@@ -368,6 +385,7 @@ static int filter_frame(AVFilterLink *avctx, AVFrame *in)
         cl_mem mem;
         cl_float2 pan = {(float)zoom->x, (float)zoom->y};
         cl_float cl_zoom = zoom->zoom;
+        cl_float cl_shadowZoom = zoom->shadowZoom;
         cl_float cl_oob_plane_color = zoom->fillcolor.comp[plane].u32[0] / (float)(1 << zoom->desc->comp[plane].depth);
         kernel_arg = 0;
 
@@ -382,6 +400,9 @@ static int filter_frame(AVFilterLink *avctx, AVFrame *in)
         kernel_arg++;
 
         CL_SET_KERNEL_ARG(zoom->kernel, kernel_arg, cl_float, &cl_zoom);
+        kernel_arg++;
+
+        CL_SET_KERNEL_ARG(zoom->kernel, kernel_arg, cl_float, &cl_shadowZoom);
         kernel_arg++;
 
         CL_SET_KERNEL_ARG(zoom->kernel, kernel_arg, cl_float, &cl_oob_plane_color);
