@@ -296,16 +296,42 @@ static inline int normalize_xy(double d, int chroma_sub)
   return (int)d & ~((1 << chroma_sub) - 1);
 }
 
+static int scale(const uint8_t* const* src, int src_w, int src_h, int* src_linesize, int src_format,
+                       uint8_t* const* dst, int dst_w, int dst_h, int* dst_linesize, int dst_format,
+                 int sws_flags) {
+
+    struct SwsContext *sws = sws_alloc_context();
+    int ret = 0;
+
+    if (!sws) {
+        return AVERROR(ENOMEM);
+    }
+
+    av_opt_set_int(sws, "srcw", src_w, 0);
+    av_opt_set_int(sws, "srch", src_h, 0);
+    av_opt_set_int(sws, "src_format", src_format, 0);
+    av_opt_set_int(sws, "dstw", dst_w, 0);
+    av_opt_set_int(sws, "dsth", dst_h, 0);
+    av_opt_set_int(sws, "dst_format", dst_format, 0);
+    if (sws_flags)
+        av_opt_set_int(sws, "sws_flags", sws_flags, 0);
+
+    if ((ret = sws_init_context(sws, NULL, NULL)) < 0) {
+        return ret;
+    }
+
+    sws_scale(sws, src, src_linesize, 0, src_h, dst, dst_linesize);
+
+    sws_freeContext(sws);
+
+    return ret;
+}
+
 static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
 {
     av_log(zoom, AV_LOG_DEBUG, "zoom out\n");
 
     int ret = 0;
-    zoom->sws = sws_alloc_context();
-    if (!zoom->sws) {
-        ret = AVERROR(ENOMEM);
-        goto error;
-    }
 
     const double zoom_val = zoom->zoom;
 
@@ -344,23 +370,12 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "zoom: %.6f y: %.3f\n", zoom->zoom);
     av_log(zoom, AV_LOG_DEBUG, "scaling: %dx%d -> %dx%d\n", in_w, in_h, out_w, out_h);
 
-    av_opt_set_int(zoom->sws, "srcw", in_w, 0);
-    av_opt_set_int(zoom->sws, "srch", in_h, 0);
-    av_opt_set_int(zoom->sws, "src_format", in_f, 0);
-    av_opt_set_int(zoom->sws, "dstw", out_w, 0);
-    av_opt_set_int(zoom->sws, "dsth", out_h, 0);
-    av_opt_set_int(zoom->sws, "dst_format", out_f, 0);
-
-    if(zoom->interpolation)
-        av_opt_set_int(zoom->sws, "sws_flags", zoom->interpolation, 0);
-
-    if ((ret = sws_init_context(zoom->sws, NULL, NULL)) < 0)
+    ret = scale((const uint8_t *const *)in->data, in_w, in_h, in->linesize, in_f,
+                temp_frame->data, out_w, out_h, temp_frame->linesize, out_f,
+                zoom->interpolation);
+    if (ret < 0) {
         goto error;
-
-    sws_scale(zoom->sws, (const uint8_t *const *)&in->data, in->linesize, 0, in_h, temp_frame->data, temp_frame->linesize);
-
-    sws_freeContext(zoom->sws);
-    zoom->sws = NULL;
+    }
 
     av_log(zoom, AV_LOG_DEBUG, "x: %.3f y: %.3f\n", x, y);
 
@@ -425,11 +440,6 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "zoom in\n");
 
     int ret = 0;
-    zoom->sws = sws_alloc_context();
-    if (!zoom->sws) {
-        ret = AVERROR(ENOMEM);
-        goto error;
-    }
 
     const double zoom_val = zoom->zoom;
 
@@ -502,23 +512,12 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     for (int k = 0; in->data[k]; k++)
         input[k] = in->data[k] + py[k] * in->linesize[k] + px[k];
 
-    // stretching bottom right
-    av_opt_set_int(zoom->sws, "srcw", in_w, 0);
-    av_opt_set_int(zoom->sws, "srch", in_h, 0);
-    av_opt_set_int(zoom->sws, "src_format", in_f, 0);
-    av_opt_set_int(zoom->sws, "dstw", out_w, 0);
-    av_opt_set_int(zoom->sws, "dsth", out_h, 0);
-    av_opt_set_int(zoom->sws, "dst_format", out_f, 0);
-    if(zoom->interpolation)
-        av_opt_set_int(zoom->sws, "sws_flags", zoom->interpolation, 0);
-
-    if ((ret = sws_init_context(zoom->sws, NULL, NULL)) < 0)
+    ret = scale((const uint8_t *const *)&input, in_w, in_h, in->linesize, in_f,
+                out->data, out_w, out_h, out->linesize, out_f,
+                zoom->interpolation);
+    if (ret < 0) {
         goto error;
-
-    sws_scale(zoom->sws, (const uint8_t *const *)&input, in->linesize, 0, in_h, out->data, out->linesize);
-
-    sws_freeContext(zoom->sws);
-    zoom->sws = NULL;
+    }
 
     error:
     return ret;
