@@ -93,18 +93,19 @@ __kernel void zoom(__write_only image2d_t destination,
                    unsigned int index,
                    float2 UNCLAMPED_PAN,
                    float ZOOM,
+                   float SHADOW_ZOOM,
                    float oob_plane_color,
                    __read_only  image2d_t source)
 {
     float2 dim_in  = (float2)(get_image_dim(source).x, get_image_dim(source).y);
-    float2 dim_out = (float2)(get_image_dim(destination).x, get_image_dim(destination).y);
+    float2 dim_out = (float2)(get_image_dim(destination).x / SHADOW_ZOOM, get_image_dim(destination).y / SHADOW_ZOOM);
 
     float2 PAN = clamp_pan_inbounds(UNCLAMPED_PAN, dim_out, ZOOM, dim_in);
 
     int2 dst_location = (int2)(get_global_id(0), get_global_id(1));
 
     float2 src_location = scale_coords_pxout_to_pxin(
-        (float2)(get_global_id(0), get_global_id(1)),
+        (float2)(get_global_id(0), get_global_id(1)) / SHADOW_ZOOM,
         dim_out,
         ZOOM,
         dim_in,

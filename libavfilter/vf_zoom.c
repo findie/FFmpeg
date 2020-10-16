@@ -64,12 +64,18 @@ typedef struct ZoomContext {
     unsigned long   schedule_index;
 
     double          zoom_max;
+    // used for actual zoom
     double          zoom;
+    // used to determine if we need to adjust the zoom when w/h are set & different than expected
+    double          shadowZoom;
     double          x;
     double          y;
     int             interpolation;
     FFDrawColor     fillcolor;
 
+    int             desiredWidth;
+    int             desiredHeight;
+    int             exact;
     double          outAspectRatio;
 
     char*           zoom_expr_str;
@@ -110,8 +116,11 @@ static const AVOption zoom_options[] = {
     { "z",                  "set zoom offset expression",           OFFSET(zoom_expr_str),  AV_OPT_TYPE_STRING, {.str="1"},          CHAR_MIN, CHAR_MAX, FLAGS },
     { "x",                  "set x offset expression",              OFFSET(x_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
     { "y",                  "set y offset expression",              OFFSET(y_expr_str),     AV_OPT_TYPE_STRING, {.str="0.5"},        CHAR_MIN, CHAR_MAX, FLAGS },
-    { "ar",                 "set aspect ratio",                     OFFSET(outAspectRatio), AV_OPT_TYPE_DOUBLE, {.dbl=0},          0.00    ,   100   , FLAGS },
-    { "fillcolor",          "set color for background",             OFFSET(fillcolor.rgba), AV_OPT_TYPE_COLOR,  {.str="black@0"},  CHAR_MIN, CHAR_MAX, FLAGS },
+    { "ar",                 "set aspect ratio",                     OFFSET(outAspectRatio), AV_OPT_TYPE_DOUBLE, {.dbl=0},            0.00    ,   100   , FLAGS },
+    { "width",              "set desired width",                    OFFSET(desiredWidth),   AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
+    { "height",             "set desired height",                   OFFSET(desiredHeight),  AV_OPT_TYPE_INT   , {.i64=-1},           -1      ,   65536 , FLAGS },
+    { "exact",              "set frame size is exact or div by 2",  OFFSET(exact),          AV_OPT_TYPE_BOOL  , {.i64=0},            0       ,   1     , FLAGS },
+    { "fillcolor",          "set color for background",             OFFSET(fillcolor.rgba), AV_OPT_TYPE_COLOR,  {.str="black@0"},    CHAR_MIN, CHAR_MAX, FLAGS },
 
     { "interpolation",      "enable interpolation when scaling",    OFFSET(interpolation),  AV_OPT_TYPE_INT,    {.i64=FAST_BILINEAR}, SWS_FAST_BILINEAR,   SPLINE, FLAGS, "interpolation"},
       { "fast_bilinear",                                      0,                        0,  AV_OPT_TYPE_CONST,  {.i64=FAST_BILINEAR}, 0,                        0, FLAGS, "interpolation"},
@@ -167,6 +176,10 @@ static int config_props(AVFilterLink *inlink)
 
     if(zoom->outAspectRatio == 0) {
       zoom->outAspectRatio = 1.0 * inlink->w / inlink->h;
+    }
+
+    if(zoom->desiredWidth > 0 && zoom->desiredHeight > 0) {
+        zoom->outAspectRatio = 1.0 * zoom->desiredWidth / zoom->desiredHeight;
     }
 
     if (zoom->outAspectRatio <= 1) {
@@ -255,18 +268,28 @@ static int config_output(AVFilterLink *outlink)
       outlink->w = round(in_w * (aspectRatio / originalAspectRatio));
       outlink->h = in_h;
     }
+    s->shadowZoom = 1;
 
-    if(outlink->w % 2 != 0){
-      outlink->w -= 1;
+    if(s->desiredWidth > 0 && s->desiredHeight > 0) {
+        s->shadowZoom = 1.0 * s->desiredWidth / outlink->w;
+        outlink->w = s->desiredWidth;
+        outlink->h = s->desiredHeight;
     }
-    if(outlink->h % 2 != 0){
-      outlink->h -= 1;
+
+    if(!s->exact) {
+        if (outlink->w % 2 != 0) {
+            outlink->w -= 1;
+        }
+        if (outlink->h % 2 != 0) {
+            outlink->h -= 1;
+        }
     }
-    if(outlink->w <= 0){
-      outlink->w = 2;
+
+    if (outlink->w <= 0) {
+        outlink->w = 2;
     }
-    if(outlink->h <= 0){
-      outlink->h = 2;
+    if (outlink->h <= 0) {
+        outlink->h = 2;
     }
     return 0;
 }
@@ -296,18 +319,44 @@ static inline int normalize_xy(double d, int chroma_sub)
   return (int)d & ~((1 << chroma_sub) - 1);
 }
 
+static int scale(const uint8_t* const* src, int src_w, int src_h, int* src_linesize, int src_format,
+                       uint8_t* const* dst, int dst_w, int dst_h, int* dst_linesize, int dst_format,
+                 int sws_flags) {
+
+    struct SwsContext *sws = sws_alloc_context();
+    int ret = 0;
+
+    if (!sws) {
+        return AVERROR(ENOMEM);
+    }
+
+    av_opt_set_int(sws, "srcw", src_w, 0);
+    av_opt_set_int(sws, "srch", src_h, 0);
+    av_opt_set_int(sws, "src_format", src_format, 0);
+    av_opt_set_int(sws, "dstw", dst_w, 0);
+    av_opt_set_int(sws, "dsth", dst_h, 0);
+    av_opt_set_int(sws, "dst_format", dst_format, 0);
+    if (sws_flags)
+        av_opt_set_int(sws, "sws_flags", sws_flags, 0);
+
+    if ((ret = sws_init_context(sws, NULL, NULL)) < 0) {
+        return ret;
+    }
+
+    sws_scale(sws, src, src_linesize, 0, src_h, dst, dst_linesize);
+
+    sws_freeContext(sws);
+
+    return ret;
+}
+
 static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *outlink)
 {
     av_log(zoom, AV_LOG_DEBUG, "zoom out\n");
 
     int ret = 0;
-    zoom->sws = sws_alloc_context();
-    if (!zoom->sws) {
-        ret = AVERROR(ENOMEM);
-        goto error;
-    }
 
-    const double zoom_val = zoom->zoom;
+    const double zoom_val = zoom->zoom * zoom->shadowZoom;
 
     const int in_w  = in->width;
     const int in_h  = in->height;
@@ -344,23 +393,12 @@ static int zoom_out(ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "zoom: %.6f y: %.3f\n", zoom->zoom);
     av_log(zoom, AV_LOG_DEBUG, "scaling: %dx%d -> %dx%d\n", in_w, in_h, out_w, out_h);
 
-    av_opt_set_int(zoom->sws, "srcw", in_w, 0);
-    av_opt_set_int(zoom->sws, "srch", in_h, 0);
-    av_opt_set_int(zoom->sws, "src_format", in_f, 0);
-    av_opt_set_int(zoom->sws, "dstw", out_w, 0);
-    av_opt_set_int(zoom->sws, "dsth", out_h, 0);
-    av_opt_set_int(zoom->sws, "dst_format", out_f, 0);
-
-    if(zoom->interpolation)
-        av_opt_set_int(zoom->sws, "sws_flags", zoom->interpolation, 0);
-
-    if ((ret = sws_init_context(zoom->sws, NULL, NULL)) < 0)
+    ret = scale((const uint8_t *const *)in->data, in_w, in_h, in->linesize, in_f,
+                temp_frame->data, out_w, out_h, temp_frame->linesize, out_f,
+                zoom->interpolation);
+    if (ret < 0) {
         goto error;
-
-    sws_scale(zoom->sws, (const uint8_t *const *)&in->data, in->linesize, 0, in_h, temp_frame->data, temp_frame->linesize);
-
-    sws_freeContext(zoom->sws);
-    zoom->sws = NULL;
+    }
 
     av_log(zoom, AV_LOG_DEBUG, "x: %.3f y: %.3f\n", x, y);
 
@@ -425,11 +463,6 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     av_log(zoom, AV_LOG_DEBUG, "zoom in\n");
 
     int ret = 0;
-    zoom->sws = sws_alloc_context();
-    if (!zoom->sws) {
-        ret = AVERROR(ENOMEM);
-        goto error;
-    }
 
     const double zoom_val = zoom->zoom;
 
@@ -502,23 +535,12 @@ static int zoom_in (ZoomContext *zoom, AVFrame *in, AVFrame *out, AVFilterLink *
     for (int k = 0; in->data[k]; k++)
         input[k] = in->data[k] + py[k] * in->linesize[k] + px[k];
 
-    // stretching bottom right
-    av_opt_set_int(zoom->sws, "srcw", in_w, 0);
-    av_opt_set_int(zoom->sws, "srch", in_h, 0);
-    av_opt_set_int(zoom->sws, "src_format", in_f, 0);
-    av_opt_set_int(zoom->sws, "dstw", out_w, 0);
-    av_opt_set_int(zoom->sws, "dsth", out_h, 0);
-    av_opt_set_int(zoom->sws, "dst_format", out_f, 0);
-    if(zoom->interpolation)
-        av_opt_set_int(zoom->sws, "sws_flags", zoom->interpolation, 0);
-
-    if ((ret = sws_init_context(zoom->sws, NULL, NULL)) < 0)
+    ret = scale((const uint8_t *const *)&input, in_w, in_h, in->linesize, in_f,
+                out->data, out_w, out_h, out->linesize, out_f,
+                zoom->interpolation);
+    if (ret < 0) {
         goto error;
-
-    sws_scale(zoom->sws, (const uint8_t *const *)&input, in->linesize, 0, in_h, out->data, out->linesize);
-
-    sws_freeContext(zoom->sws);
-    zoom->sws = NULL;
+    }
 
     error:
     return ret;
@@ -599,9 +621,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                       out_w, out_h);
 
     // scale
-    if(zoom_val == 1) {
-        // it's 1, just copy
-        // quite an expensive noop :D
+    if(zoom_val == 1 && zoom->shadowZoom == 1) {
+        // it's 1 with no extra fancy zooming, just copy
+        // the area that is in view
         ff_copy_rectangle2(&zoom->dc,
                            out->data, out->linesize,
                            in->data, in->linesize,
@@ -617,7 +639,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         ret = zoom_out(zoom, in, out, outlink);
         if(ret)
             goto error;
-    } else if (zoom_val > 1){
+    } else if (zoom_val >= 1){
         // zoom in (1, +ing)
         ret = zoom_in(zoom, in, out, outlink);
         if(ret)
