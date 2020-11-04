@@ -211,7 +211,7 @@ static int parse_data(AVFilterLink *inlink)
         s->thickness = var_values[VAR_THICKNESS] = res;
 
         // parse expression for A
-        if(s->color_alpha_expr)
+        if(s->color_alpha_expr && s->color_alpha_expr[0])
         {
             av_log(s, AV_LOG_VERBOSE, "Enabled dynamic color on A! \n");
 
@@ -224,7 +224,11 @@ static int parse_data(AVFilterLink *inlink)
         }
 
         // parse expressions for RGB
-        if(s->color_red_expr || s->color_green_expr || s->color_blue_expr)
+        if(
+            (s->color_red_expr && s->color_red_expr[0]) ||
+            (s->color_green_expr && s->color_green_expr[0]) ||
+            (s->color_blue_expr && s->color_blue_expr[0])
+        )
         {
             uint8_t rgba[4];
             rgba[A] = s->yuv_color[A];
@@ -253,7 +257,11 @@ static int parse_data(AVFilterLink *inlink)
         }
 
         // parse expressions for YUV
-        if(s->color_y_expr || s->color_u_expr || s->color_v_expr)
+        if(
+            (s->color_y_expr && s->color_y_expr[0]) ||
+            (s->color_u_expr && s->color_u_expr[0]) ||
+            (s->color_v_expr && s->color_v_expr[0])
+        )
         {
             uint8_t yuva[4];
             yuva[A] = s->yuv_color[A];
