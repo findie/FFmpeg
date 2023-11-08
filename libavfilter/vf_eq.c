@@ -238,9 +238,9 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_GRAY8,
         AV_PIX_FMT_YUV410P,
         AV_PIX_FMT_YUV411P,
-        AV_PIX_FMT_YUV420P,
-        AV_PIX_FMT_YUV422P,
-        AV_PIX_FMT_YUV444P,
+        AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUVA420P,
+        AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUVA422P,
+        AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUVA444P,
         AV_PIX_FMT_NONE
     };
     AVFilterFormats *fmts_list = ff_make_format_list(pixel_fmts_eq);
@@ -288,12 +288,13 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
             h = AV_CEIL_RSHIFT(h, desc->log2_chroma_h);
         }
 
-        if (eq->param[i].adjust)
-            eq->param[i].adjust(&eq->param[i], out->data[i], out->linesize[i],
-                                 in->data[i], in->linesize[i], w, h);
-        else
+        if (i == 3 || !eq->param[i].adjust)
             av_image_copy_plane(out->data[i], out->linesize[i],
                                 in->data[i], in->linesize[i], w, h);
+
+        else
+            eq->param[i].adjust(&eq->param[i], out->data[i], out->linesize[i],
+                                 in->data[i], in->linesize[i], w, h);
     }
 
     av_frame_free(&in);
