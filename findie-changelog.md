@@ -1,5 +1,8 @@
 # Findie Changelog
 
+### Full list
+https://github.com/findie/FFmpeg/commits/findie?author=legraphista
+
 #### 2018 07 18
 
 - vf_framechange
