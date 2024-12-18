@@ -75,6 +75,7 @@ static const char *const var_names[] = {
 enum EvalMode {
     EVAL_MODE_INIT,
     EVAL_MODE_FRAME,
+    EVAL_MODE_FRAME_SCHEDULE,
     EVAL_MODE_NB
 };
 
@@ -85,6 +86,9 @@ static av_cold void uninit(AVFilterContext *ctx)
     ff_framesync_uninit(&s->fs);
     av_expr_free(s->x_pexpr); s->x_pexpr = NULL;
     av_expr_free(s->y_pexpr); s->y_pexpr = NULL;
+    if(s->eval_mode == EVAL_MODE_FRAME_SCHEDULE) {
+      av_free(s->schedule);
+    }
 }
 
 static inline int normalize_xy(double d, int chroma_sub)
@@ -104,6 +108,26 @@ static void eval_expr(AVFilterContext *ctx)
     s->var_values[VAR_X] = av_expr_eval(s->x_pexpr, s->var_values, NULL);
     s->x = normalize_xy(s->var_values[VAR_X], s->hsub);
     s->y = normalize_xy(s->var_values[VAR_Y], s->vsub);
+}
+
+static void eval_schedule(AVFilterContext *ctx, int w, int h)
+{
+    OverlayContext *s = ctx->priv;
+
+    unsigned long offset = s->schedule_index * 2;
+    s->schedule_index += 1;
+
+    double *schedule = s->schedule;
+
+    if(offset >= s->schedule_size * 2){
+      av_log(s, AV_LOG_WARNING, "schedule index %ld exceeds schedule size of %ld (%ld values)\n", offset / 2, s->schedule_size, s->schedule_size * 2);
+      offset = s->schedule_size * 2 - 2;
+    }
+
+    // XYZ
+    s->x = normalize_xy(schedule[offset + 0] * w, s->hsub);
+    s->y = normalize_xy(schedule[offset + 1] * h, s->vsub);
+    av_log(s, AV_LOG_DEBUG, "schedule index %ld x:%.3f y:%.3f \n", offset / 2, s->x, s->y);
 }
 
 static int set_expr(AVExpr **pexpr, const char *expr, const char *option, void *log_ctx)
@@ -305,6 +329,52 @@ static int config_input_overlay(AVFilterLink *inlink)
         av_log(ctx, AV_LOG_VERBOSE, "x:%f xi:%d y:%f yi:%d\n",
                s->var_values[VAR_X], s->x,
                s->var_values[VAR_Y], s->y);
+    } else if (s->eval_mode == EVAL_MODE_FRAME_SCHEDULE) {
+        FILE *f = av_fopen_utf8(s->schedule_file_path, "r");
+        uint64_t file_size = 0;
+
+        if (!f) {
+          int ret = AVERROR(errno);
+          av_log(s, AV_LOG_ERROR, "Cannot open file '%s' for reading schedule: %s\n",
+                 s->schedule_file_path, av_err2str(ret));
+          return ret;
+        }
+
+        fseek(f, 0L, SEEK_END);
+        file_size = ftell(f);
+        fseek(f, 0L, SEEK_SET);
+
+        if(file_size == 0){
+          av_log(s, AV_LOG_ERROR, "File '%s' contents are empty, file size is 0\n", s->schedule_file_path);
+          return AVERROR(EINVAL);
+        }
+
+        if(file_size % sizeof(double) != 0) {
+          av_log(s, AV_LOG_ERROR, "File '%s' contents are unaliged to double. File size %ld should be %ld\n",
+                 s->schedule_file_path,
+                 file_size,
+                 file_size / sizeof(double) * sizeof(double));
+          return AVERROR(EINVAL);
+        }
+
+        unsigned long num_doubles = file_size / sizeof(double);
+
+        if(num_doubles % 2 != 0) {
+          av_log(s, AV_LOG_ERROR, "File '%s' double values are unaliged to XYXYXY... (not divisible by 2). Value count is %ld, should be %ld\n",
+                 s->schedule_file_path,
+                 num_doubles,
+                 num_doubles / 2 * 2);
+          return AVERROR(EINVAL);
+        }
+
+        s->schedule_size = file_size / sizeof(double) / 2;
+
+        s->schedule = av_malloc(sizeof(char) * file_size);
+        if(s->schedule == NULL) {
+          return AVERROR(ENOMEM);
+        }
+        fread(s->schedule, sizeof(char), file_size, f);
+        fclose(f);
     }
 
     av_log(ctx, AV_LOG_VERBOSE,
@@ -1021,6 +1091,8 @@ static int do_blend(FFFrameSync *fs)
                s->var_values[VAR_N], s->var_values[VAR_T], s->var_values[VAR_POS],
                s->var_values[VAR_X], s->x,
                s->var_values[VAR_Y], s->y);
+    } else if (s->eval_mode == EVAL_MODE_FRAME_SCHEDULE) {
+        eval_schedule(ctx, mainpic->width, mainpic->height);
     }
 
     if (s->x < mainpic->width  && s->x + second->width  >= 0 &&
@@ -1062,8 +1134,9 @@ static const AVOption overlay_options[] = {
         { "endall", "End both streams.",            0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_ENDALL }, .flags = FLAGS, "eof_action" },
         { "pass",   "Pass through the main input.", 0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_PASS },   .flags = FLAGS, "eof_action" },
     { "eval", "specify when to evaluate expressions", OFFSET(eval_mode), AV_OPT_TYPE_INT, {.i64 = EVAL_MODE_FRAME}, 0, EVAL_MODE_NB-1, FLAGS, "eval" },
-         { "init",  "eval expressions once during initialization", 0, AV_OPT_TYPE_CONST, {.i64=EVAL_MODE_INIT},  .flags = FLAGS, .unit = "eval" },
-         { "frame", "eval expressions per-frame",                  0, AV_OPT_TYPE_CONST, {.i64=EVAL_MODE_FRAME}, .flags = FLAGS, .unit = "eval" },
+         { "init",  "eval expressions once during initialization", 0, AV_OPT_TYPE_CONST, {.i64=EVAL_MODE_INIT          }, .flags = FLAGS, .unit = "eval" },
+         { "frame", "eval expressions per-frame",                  0, AV_OPT_TYPE_CONST, {.i64=EVAL_MODE_FRAME         }, .flags = FLAGS, .unit = "eval" },
+         { "frame-schedule", "read per-frame schedule",            0, AV_OPT_TYPE_CONST, {.i64=EVAL_MODE_FRAME_SCHEDULE}, .flags = FLAGS, .unit = "eval" },
     { "shortest", "force termination when the shortest input terminates", OFFSET(fs.opt_shortest), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
     { "format", "set output format", OFFSET(format), AV_OPT_TYPE_INT, {.i64=OVERLAY_FORMAT_YUV420}, 0, OVERLAY_FORMAT_NB-1, FLAGS, "format" },
         { "yuv420", "", 0, AV_OPT_TYPE_CONST, {.i64=OVERLAY_FORMAT_YUV420}, .flags = FLAGS, .unit = "format" },
@@ -1078,6 +1151,7 @@ static const AVOption overlay_options[] = {
     { "alpha", "alpha format", OFFSET(alpha_format), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, "alpha_format" },
         { "straight",      "", 0, AV_OPT_TYPE_CONST, {.i64=0}, .flags = FLAGS, .unit = "alpha_format" },
         { "premultiplied", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, .flags = FLAGS, .unit = "alpha_format" },
+    { "schedule", "binary file of <double> xyxyxy...", OFFSET(schedule_file_path), AV_OPT_TYPE_STRING, {.str=""},       CHAR_MIN, CHAR_MAX, FLAGS },
     { NULL }
 };
 

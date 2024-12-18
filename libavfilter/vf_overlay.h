@@ -65,6 +65,11 @@ typedef struct OverlayContext {
     int alpha_format;
     int eval_mode;              ///< EvalMode
 
+    char*           schedule_file_path;
+    double*         schedule;
+    unsigned long   schedule_size;
+    unsigned long   schedule_index;
+
     FFFrameSync fs;
 
     int main_pix_step[4];       ///< steps per pixel for each plane of the main output
